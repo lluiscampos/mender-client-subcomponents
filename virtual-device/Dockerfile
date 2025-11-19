@@ -95,4 +95,4 @@ RUN \
 RUN update-ca-certificates
 
 COPY entrypoint.sh /
-CMD /entrypoint.sh
+CMD [ "/entrypoint.sh" ]
