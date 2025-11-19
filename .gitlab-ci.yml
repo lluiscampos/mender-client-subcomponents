@@ -33,3 +33,12 @@ publish:image:
 publish:image:mender:
   rules:
     - when: never
+
+test:validate:schema:
+  stage: test
+  needs: []
+  image: node
+  before_script:
+    - npm install --global ajv-cli
+  script:
+    - ajv validate -s subcomponents/release.schema.json -d subcomponents/releases/5.0.3.json

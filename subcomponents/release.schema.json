@@ -1,0 +1,38 @@
+{
+  "$id": "https://raw.githubusercontent.com/mendersoftware/mender-client-subcomponents/refs/heads/main/subcomponents/release.schema.json",
+  "title": "Mender Client release definition",
+  "description": "Defines a single release of Mender Client as a collection of subcomponents and its versions. See https://docs.mender.io/release-information/supported-releases#mender-client-subcomponents",
+  "type": "object",
+  "required": ["version", "repos"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "The release version identifier (e.g., '1.2.3')",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "repos": {
+      "type": "array",
+      "description": "List of repositories and their versions for this release",
+      "items": {
+        "type": "object",
+        "required": ["name", "version"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Repository name",
+            "minLength": 1
+          },
+          "version": {
+            "type": "string",
+            "description": "Version of this repository in the release",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
+}
