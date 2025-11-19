@@ -1,19 +1,36 @@
 # Creates a container which acts as a bare bones non-VM based Mender Client
 # installation, for use in tests and as Virtual Device for evaluation
-FROM ubuntu:24.04 AS build
+
+# Build mender repository, which is heaviest part
+FROM ubuntu:24.04 AS build-mender
 
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y make git build-essential golang liblzma-dev    \
-    jq libssl-dev libglib2.0-dev curl cmake liblmdb++-dev libboost-dev libboost-log-dev \
-    libarchive-dev libdbus-1-dev libsystemd-dev
+RUN apt-get update && apt-get install -y make git build-essential jq cmake \
+    libssl-dev liblmdb++-dev libboost-dev libboost-log-dev \
+    libarchive-dev libdbus-1-dev
 
 ARG MENDER_CLIENT_REV=master
+RUN git clone https://github.com/mendersoftware/mender /src/mender
+WORKDIR /src/mender
+RUN git fetch origin $MENDER_CLIENT_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CLIENT_REV
+RUN git submodule update --init
+
+WORKDIR /src/mender
+RUN mkdir --parents /mender-install/etc/mender
+RUN cmake -D CMAKE_INSTALL_PREFIX:PATH=/usr -S .
+RUN DESTDIR=/mender-install make --jobs=$(nproc --all) install
+RUN jq ".ServerCertificate=\"/usr/share/doc/mender-auth/examples/demo.crt\" | .ServerURL=\"https://docker.mender.io/\"" \
+    < examples/mender.conf.demo > /mender-install/etc/mender/mender.conf
+RUN mkdir --parents /mender-install/var/lib/mender && echo device_type=generic-x86_64 > /mender-install/var/lib/mender/device_type
+
+# Build mender-connect and mender-configure, and generate the bootstrap Artifact
+FROM ubuntu:24.04 AS build-other
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y make git golang liblzma-dev libglib2.0-dev curl jq
+
 ARG MENDER_CONNECT_REV=master
 ARG MENDER_CONFIGURE_REV=master
-
-RUN git clone https://github.com/mendersoftware/mender /src/mender
-RUN (cd /src/mender && git fetch origin $MENDER_CLIENT_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CLIENT_REV)
-RUN cd /src/mender && git submodule update --init
 
 RUN git clone https://github.com/mendersoftware/mender-connect /src/mender-connect
 RUN (cd /src/mender-connect && git fetch origin $MENDER_CONNECT_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CONNECT_REV)
@@ -22,12 +39,6 @@ RUN git clone https://github.com/mendersoftware/mender-configure-module /src/men
 RUN (cd /src/mender-configure-module && git fetch origin $MENDER_CONFIGURE_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CONFIGURE_REV)
 
 RUN mkdir --parents /mender-install/etc/mender
-
-WORKDIR /src/mender
-RUN cmake -D CMAKE_INSTALL_PREFIX:PATH=/usr -S .
-RUN DESTDIR=/mender-install make --jobs=$(nproc --all) install
-RUN jq ".ServerCertificate=\"/usr/share/doc/mender-auth/examples/demo.crt\" | .ServerURL=\"https://docker.mender.io/\"" \
-    < examples/mender.conf.demo > /mender-install/etc/mender/mender.conf
 
 # Install mender-artifact from upstream
 RUN curl -fsSL https://downloads.mender.io/repos/debian/gpg > /etc/apt/trusted.gpg.d/mender.asc && \
@@ -48,12 +59,11 @@ RUN jq ".User=\"root\"" \
 WORKDIR /src/mender-configure-module
 RUN make DESTDIR=/mender-install install
 
-RUN mkdir -p /mender-install/var/lib/mender && echo device_type=generic-x86_64 > /mender-install/var/lib/mender/device_type
-
+# Final image to run the Virtual Device from
 FROM ubuntu:24.04
 
-RUN mkdir -p /run/dbus && apt-get update && apt-get install -y \
-    liblzma5 dbus openssh-server sudo liblmdb0 libarchive13 libboost-log1.83.0 iproute2
+RUN mkdir --parents /run/dbus && apt-get update && apt-get install -y \
+    liblzma5 dbus openssh-server sudo liblmdb0 libarchive13 libboost-log1.83.0 iproute2 jq
 
 # Set no password
 RUN sed -ie 's/^root:[^:]*:/root::/' /etc/shadow
@@ -63,15 +73,19 @@ PermitRootLogin yes\n\
 Port 22\n\
 Port 8822\n' >> /etc/ssh/sshd_config
 
-COPY --from=build /mender-install/usr/ /usr/
-COPY --from=build /mender-install/etc/ /etc/
-COPY --from=build /mender-install/lib/ /lib/
-COPY --from=build /mender-install/var/ /var/
-COPY --from=build /bootstrap.mender /var/lib/mender/bootstrap.mender
+# Install Mender Client
+COPY --from=build-mender /mender-install/usr/ /usr/
+COPY --from=build-mender /mender-install/etc/ /etc/
+COPY --from=build-mender /mender-install/lib/ /lib/
+COPY --from=build-mender /mender-install/var/ /var/
+COPY --from=build-other /mender-install/usr/ /usr/
+COPY --from=build-other /mender-install/etc/ /etc/
+COPY --from=build-other /mender-install/lib/ /lib/
+COPY --from=build-other /bootstrap.mender /var/lib/mender/bootstrap.mender
 
 # Install the demo server certificate(s). See:
 # https://github.com/mendersoftware/meta-mender/blob/master/meta-mender-core/recipes-mender/mender-server-certificate/mender-server-certificate.bb
-COPY --from=build /src/mender/support/demo.crt /server.crt
+COPY --from=build-mender /src/mender/support/demo.crt /server.crt
 RUN \
     mkdir /usr/local/share/ca-certificates/mender                              ;\
     certnum=1                                                                  ;\
