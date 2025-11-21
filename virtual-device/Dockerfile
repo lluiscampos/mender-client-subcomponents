@@ -32,15 +32,27 @@ RUN apt-get update && apt-get install -y make git golang liblzma-dev libglib2.0-
 ARG MENDER_CONNECT_REV=master
 ARG MENDER_CONFIGURE_REV=master
 
-RUN git clone https://github.com/mendersoftware/mender-connect /src/mender-connect
-RUN (cd /src/mender-connect && git fetch origin $MENDER_CONNECT_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CONNECT_REV)
+# mender-connect ---------------------------------------------------------------
 
-RUN git clone https://github.com/mendersoftware/mender-configure-module /src/mender-configure-module
-RUN (cd /src/mender-configure-module && git fetch origin $MENDER_CONFIGURE_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CONFIGURE_REV)
+RUN git clone https://github.com/mendersoftware/mender-connect /src/mender-connect
+WORKDIR /src/mender-connect
+RUN git fetch origin $MENDER_CONNECT_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CONNECT_REV
 
 RUN mkdir --parents /mender-install/etc/mender
+RUN make prefix=/mender-install install
+RUN jq ".User=\"root\"" \
+    < examples/mender-connect.conf > /mender-install/etc/mender/mender-connect.conf
 
-# Install mender-artifact from upstream
+# mender-configure -------------------------------------------------------------
+
+RUN git clone https://github.com/mendersoftware/mender-configure-module /src/mender-configure-module
+WORKDIR /src/mender-configure-module
+RUN git fetch origin $MENDER_CONFIGURE_REV && git checkout FETCH_HEAD || git checkout -f $MENDER_CONFIGURE_REV
+
+RUN make DESTDIR=/mender-install install
+
+# bootstrap Artifact -----------------------------------------------------------
+
 RUN curl --fail --silent --show-error --location \
         https://downloads.mender.io/repos/debian/gpg > /etc/apt/trusted.gpg.d/mender.asc && \
     echo "deb [arch=$(dpkg --print-architecture)] https://downloads.mender.io/repos/workstation-tools ubuntu/$(. /etc/lsb-release && echo $DISTRIB_CODENAME)/stable main" > \
@@ -51,14 +63,6 @@ RUN mender-artifact write bootstrap-artifact \
         --device-type generic-x86_64 \
         --provides "rootfs-image.version:original" \
         --output-path /bootstrap.mender
-
-WORKDIR /src/mender-connect
-RUN make prefix=/mender-install install
-RUN jq ".User=\"root\"" \
-    < examples/mender-connect.conf > /mender-install/etc/mender/mender-connect.conf
-
-WORKDIR /src/mender-configure-module
-RUN make DESTDIR=/mender-install install
 
 # Final image to run the Virtual Device from
 FROM ubuntu:24.04
