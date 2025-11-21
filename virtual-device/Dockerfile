@@ -41,7 +41,8 @@ RUN (cd /src/mender-configure-module && git fetch origin $MENDER_CONFIGURE_REV &
 RUN mkdir --parents /mender-install/etc/mender
 
 # Install mender-artifact from upstream
-RUN curl -fsSL https://downloads.mender.io/repos/debian/gpg > /etc/apt/trusted.gpg.d/mender.asc && \
+RUN curl --fail --silent --show-error --location \
+        https://downloads.mender.io/repos/debian/gpg > /etc/apt/trusted.gpg.d/mender.asc && \
     echo "deb [arch=$(dpkg --print-architecture)] https://downloads.mender.io/repos/workstation-tools ubuntu/$(. /etc/lsb-release && echo $DISTRIB_CODENAME)/stable main" > \
         /etc/apt/sources.list.d/mender.list && \
     apt-get update && apt-get install -y mender-artifact
