@@ -1,5 +1,7 @@
 stages:
+  - build
   - test
+  - publish
 
 include:
   - project: "Northern.tech/Mender/mendertesting"
@@ -11,3 +13,23 @@ include:
       - '.gitlab-ci-check-commits-signoffs.yml'
   - project: "Northern.tech/Mender/mendertesting"
     file: ".gitlab-ci-check-license.yml"
+  - project: 'Northern.tech/Mender/mendertesting'
+    file: '.gitlab-ci-check-docker-build.yml'
+
+variables:
+  # Configure container multiplatform image for build and publish
+  DOCKER_REPOSITORY: mendersoftware/mender-client-docker-addons
+  DOCKER_DIR: virtual-device
+  MULTIPLATFORM_BUILD: "true"
+  MULTIPLATFORM_PLATFORMS: "linux/amd64,linux/arm64"
+
+# Exclude non multiplatform jobs
+build:docker:
+  rules:
+    - when: never
+publish:image:
+  rules:
+    - when: never
+publish:image:mender:
+  rules:
+    - when: never
