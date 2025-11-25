@@ -1,0 +1,1 @@
+echo mender_client_version=$MENDER_CLIENT_VERSION
