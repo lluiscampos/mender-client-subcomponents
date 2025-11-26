@@ -57,4 +57,13 @@ test:validate:schema:
   before_script:
     - npm install --global ajv-cli
   script:
-    - ajv validate -s subcomponents/release.schema.json -d subcomponents/releases/5.0.3.json
+    - |
+      for file in subcomponents/releases/*.json; do
+        # Validate schema
+        ajv validate -s subcomponents/release.schema.json -d "$file"
+
+        # Validate filename
+        filename=$(basename "$file" .json)
+        version_field=$(node --print "require('./$file').version")
+        test "$filename" = "$version_field"
+      done
