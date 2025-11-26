@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y make git build-essential jq cmake \
     libssl-dev liblmdb++-dev libboost-dev libboost-log-dev \
     libarchive-dev libdbus-1-dev
 
+# TODO MEN-9015: figure out how to get these from the json
 ARG MENDER_CLIENT_REV=master
 RUN git clone https://github.com/mendersoftware/mender /src/mender
 WORKDIR /src/mender
