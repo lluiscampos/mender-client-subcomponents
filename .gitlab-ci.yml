@@ -33,3 +33,37 @@ publish:image:
 publish:image:mender:
   rules:
     - when: never
+
+test:build:inventory-script:
+  stage: test
+  needs: []
+  image: debian:13-slim
+  before_script:
+    - apt-get update && apt-get install -y make jq gettext-base
+  script:
+    - |
+      for file in subcomponents/releases/*.json; do
+        rm -f inventory-script/mender-inventory-client-version
+        version=$(basename "$file" .json)
+        RELEASE=$version make build
+        cat inventory-script/mender-inventory-client-version
+        test "echo mender_client_version=$version" = "$(cat inventory-script/mender-inventory-client-version)"
+      done
+
+test:validate:schema:
+  stage: test
+  needs: []
+  image: node
+  before_script:
+    - npm install --global ajv-cli
+  script:
+    - |
+      for file in subcomponents/releases/*.json; do
+        # Validate schema
+        ajv validate -s subcomponents/release.schema.json -d "$file"
+
+        # Validate filename
+        filename=$(basename "$file" .json)
+        version_field=$(node --print "require('./$file').version")
+        test "$filename" = "$version_field"
+      done
