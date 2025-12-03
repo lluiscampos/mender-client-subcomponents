@@ -1,4 +1,4 @@
-[![Build Status](https://gitlab.com/Northern.tech/Mender/mender-artifact/badges/master/pipeline.svg)](https://gitlab.com/Northern.tech/Mender/mender-artifact/pipelines)
+[![Build Status](https://gitlab.com/Northern.tech/Mender/mender-client-subcomponents/badges/main/pipeline.svg)](https://gitlab.com/Northern.tech/Mender/mender-client-subcomponents/pipelines)
 
 # Mender Client subcomponents
 
