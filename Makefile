@@ -58,5 +58,5 @@ check-dependencies:
 .PHONY: help
 .PHONY: build
 .PHONY: build-inventory-script
-.PHONY: check-dependencies
 .PHONY: generate-conflicts
+.PHONY: check-dependencies
