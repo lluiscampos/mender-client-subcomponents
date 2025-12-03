@@ -9,6 +9,7 @@ prefix ?= $(DESTDIR)
 inventorydir ?= /usr/share/mender/inventory
 
 CONFLICTS_SEP ?=
+CONFLICTS_FILE ?= build/conflicts
 
 help:
 	@echo 'Main commands:'
@@ -40,8 +41,14 @@ install-inventory-script: inventory-script/mender-inventory-client-version
 	install -d -m 755 $(prefix)$(inventorydir)
 	install -m 755 inventory-script/mender-inventory-client-version $(prefix)$(inventorydir)/
 
+$(CONFLICTS_FILE): generate-conflicts
+
 generate-conflicts:
-	@jq -r '.components[] | "\(.name) (< \(.version))$(CONFLICTS_SEP) \(.name) (> \(.version))$(CONFLICTS_SEP)"' subcomponents/releases/$(RELEASE).json | tr '\n' ' ' | sed 's/$(CONFLICTS_SEP) $$//'
+	@mkdir --parents $(shell dirname $(CONFLICTS_FILE))
+	@jq -r '.components[] | "\(.name) (< \(.version))$(CONFLICTS_SEP) \(.name) (> \(.version))$(CONFLICTS_SEP)"' \
+		subcomponents/releases/$(RELEASE).json | \
+		tr '\n' ' ' | \
+		sed 's/$(CONFLICTS_SEP) $$//' | tee $(CONFLICTS_FILE)
 
 check-dependencies:
 	@missing=""; \
