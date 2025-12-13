@@ -32,7 +32,15 @@ inventory-script/mender-inventory-client-version: build-inventory-script
 build: build-inventory-script
 
 build-inventory-script:
+	@test -f subcomponents/releases/$(RELEASE).json || { \
+		echo "Error: Release file subcomponents/releases/$(RELEASE).json not found"; \
+		exit 1; \
+	}
 	$(eval MENDER_CLIENT_VERSION := $(shell jq -r '.version' subcomponents/releases/$(RELEASE).json))
+	@test "$(MENDER_CLIENT_VERSION)" != "null" || { \
+		echo "Error: Could not extract version from subcomponents/releases/$(RELEASE).json"; \
+		exit 1; \
+	}
 	MENDER_CLIENT_VERSION=$(MENDER_CLIENT_VERSION) envsubst '$$MENDER_CLIENT_VERSION' < inventory-script/mender-inventory-client-version.in > inventory-script/mender-inventory-client-version
 
 install: install-inventory-script
@@ -44,6 +52,10 @@ install-inventory-script: inventory-script/mender-inventory-client-version
 $(CONFLICTS_FILE): generate-conflicts
 
 generate-conflicts:
+	@test -f subcomponents/releases/$(RELEASE).json || { \
+		echo "Error: Release file subcomponents/releases/$(RELEASE).json not found"; \
+		exit 1; \
+	}
 	@mkdir --parents $(shell dirname $(CONFLICTS_FILE))
 	@jq -r '.components[] | "\(.name) (< \(.version))$(CONFLICTS_SEP) \(.name) (> \(.version))$(CONFLICTS_SEP)"' \
 		subcomponents/releases/$(RELEASE).json | \
