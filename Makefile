@@ -1,8 +1,9 @@
 SHELL := /bin/bash
 
 ALL_RELEASES := $(sort $(patsubst subcomponents/releases/%.json,%,$(wildcard subcomponents/releases/*.json)))
-LATEST_RELEASE := $(shell echo "$(ALL_RELEASES)" | tr ' ' '\n' | sort -V | tail -n1)
-RELEASE ?= $(LATEST_RELEASE)
+# By default define RELEASE from Git tag. Remove the release candidate suffix
+GIT_VERSION = $(shell git describe --tags --exact-match 2>/dev/null | sed 's/-build[0-9]\+$$//')
+RELEASE ?= $(GIT_VERSION)
 
 DESTDIR ?= /
 prefix ?= $(DESTDIR)
@@ -22,7 +23,10 @@ help:
 	@echo ''
 	@echo 'Using Mender Client release: $(RELEASE)'
 	@echo 'Available versions: $(ALL_RELEASES)'
-	@echo 'Use "RELEASE=... make" to specify a release'
+	@echo ''
+	@echo 'Use "RELEASE=... make" to specify a release. When not specified,
+	@echo 'it defaults to the checked out Git tag. And if not in a Git tag,
+	@echo 'it uses "unsupported" for the versions and generates no conflicts'
 	@echo ''
 	@echo 'Other commands:'
 	@echo '  check-deps                 - Check dependencies'
@@ -33,16 +37,21 @@ inventory-script/mender-inventory-client-version: build-inventory-script
 build: build-inventory-script
 
 build-inventory-script:
-	@test -f subcomponents/releases/$(RELEASE).json || { \
-		echo "Error: Release file subcomponents/releases/$(RELEASE).json not found"; \
-		exit 1; \
-	}
-	@MENDER_CLIENT_VERSION=$$(jq -r '.version' subcomponents/releases/$(RELEASE).json); \
-	test "$$MENDER_CLIENT_VERSION" != "null" || { \
-		echo "Error: Could not extract version from subcomponents/releases/$(RELEASE).json"; \
-		exit 1; \
-	}; \
-	MENDER_CLIENT_VERSION=$$MENDER_CLIENT_VERSION envsubst '$$MENDER_CLIENT_VERSION' < inventory-script/mender-inventory-client-version.in > inventory-script/mender-inventory-client-version
+	@if [ -z "$(RELEASE)" ]; then \
+		echo "Warning: No RELEASE specified, using 'unsupported'"; \
+		MENDER_CLIENT_VERSION=unsupported envsubst '$$MENDER_CLIENT_VERSION' < inventory-script/mender-inventory-client-version.in > inventory-script/mender-inventory-client-version; \
+	else \
+		test -f subcomponents/releases/$(RELEASE).json || { \
+			echo "Error: Release file subcomponents/releases/$(RELEASE).json not found"; \
+			exit 1; \
+		}; \
+		MENDER_CLIENT_VERSION=$$(jq -r '.version' subcomponents/releases/$(RELEASE).json); \
+		test "$$MENDER_CLIENT_VERSION" != "null" || { \
+			echo "Error: Could not extract version from subcomponents/releases/$(RELEASE).json"; \
+			exit 1; \
+		}; \
+		MENDER_CLIENT_VERSION=$$MENDER_CLIENT_VERSION envsubst '$$MENDER_CLIENT_VERSION' < inventory-script/mender-inventory-client-version.in > inventory-script/mender-inventory-client-version; \
+	fi
 
 install: install-inventory-script
 
@@ -53,15 +62,20 @@ install-inventory-script: inventory-script/mender-inventory-client-version
 $(CONFLICTS_FILE): generate-conflicts
 
 generate-conflicts:
-	@test -f subcomponents/releases/$(RELEASE).json || { \
-		echo "Error: Release file subcomponents/releases/$(RELEASE).json not found"; \
-		exit 1; \
-	}
 	@mkdir --parents $(shell dirname $(CONFLICTS_FILE))
-	@jq -r '.components[] | "\(.name) (< \(.version))$(CONFLICTS_SEP) \(.name) (> \(.version))$(CONFLICTS_SEP)"' \
-		subcomponents/releases/$(RELEASE).json | \
-		tr '\n' ' ' | \
-		sed 's/$(CONFLICTS_SEP) $$//' | tee $(CONFLICTS_FILE)
+	@if [ -z "$(RELEASE)" ]; then \
+		echo "Warning: No RELEASE specified, generating empty conflicts file"; \
+		echo "" > $(CONFLICTS_FILE); \
+	else \
+		test -f subcomponents/releases/$(RELEASE).json || { \
+			echo "Error: Release file subcomponents/releases/$(RELEASE).json not found"; \
+			exit 1; \
+		}; \
+		jq -r '.components[] | "\(.name) (< \(.version))$(CONFLICTS_SEP) \(.name) (> \(.version))$(CONFLICTS_SEP)"' \
+			subcomponents/releases/$(RELEASE).json | \
+			tr '\n' ' ' | \
+			sed 's/$(CONFLICTS_SEP) $$//' | tee $(CONFLICTS_FILE); \
+	fi
 
 check-dependencies:
 	@missing=""; \
