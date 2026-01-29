@@ -1595,29 +1595,18 @@ This program uses additional software licensed under Open Source licenses, liste
 
 
 parser = argparse.ArgumentParser(
-    description="Generate a license overview for Mender repositories."
+    description="Generate a license overview for Mender Client subcomponents."
 )
 parser.add_argument(
-    "--dir",
-    dest="DIRS",
-    action="append",
-    help="Directories to look for repositories. Later directories take precedence.",
+    "--release", required=True, help="Release version to process (e.g., '5.0.3')",
 )
 parser.add_argument(
-    "--called-from-release-tool",
-    dest="CALLED_FROM_RELEASE_TOOL",
-    action="store_true",
-    help=argparse.SUPPRESS,
+    "--repos-dir", required=True, help="Directory containing checked-out repositories",
 )
-parsed = parser.parse_args()
-
-if parsed.DIRS is not None:
-    DIRS += parsed.DIRS
-# In order for latest directories to be searched first.
-DIRS.reverse()
-
-if parsed.CALLED_FROM_RELEASE_TOOL:
-    CALLED_FROM_RELEASE_TOOL = True
+parser.add_argument(
+    "--output", help="Output file path (default: stdout)",
+)
+args = parser.parse_args()
 
 
 def select_license_text(license, author):
@@ -1838,16 +1827,41 @@ def verify_no_license_leftovers(location):
                 )
 
 
-do_repos()
+# Load release JSON and build repository map
+json_data = load_release_json(args.release)
+repos_list = build_repos_map(json_data, args.repos_dir)
+
+# Validate and process each repository
+for repo_info in repos_list:
+    validate_repository_exists(repo_info)
+    check_version_match(repo_info)
+
+    # Determine repo type and process licenses
+    check_base_license(repo_info.path)
+
+    # Check if it's a Go repository (has .go files)
+    has_go_files = False
+    for _, _, files in os.walk(repo_info.path):
+        if any([file.endswith(".go") for file in files]):
+            has_go_files = True
+            break
+
+    if has_go_files:
+        do_go_repo(repo_info.path)
+    elif os.path.exists(os.path.join(repo_info.path, "LIC_FILES_CHKSUM.sha256")):
+        process_chksum_file(os.path.join(repo_info.path, "LIC_FILES_CHKSUM.sha256"))
+        verify_no_license_leftovers(repo_info.path)
+    else:
+        sys.stderr.write(
+            f"ERROR: Unrecognized repository type for {repo_info.repo_name}\n"
+        )
+        sys.stderr.write(f"  Path: {repo_info.path}\n")
+        sys.stderr.write(f"  Expected either .go files or LIC_FILES_CHKSUM.sha256\n")
+        sys.exit(1)
 
 
 def case_insensitive_item(item):
     return item[0].lower()
-
-
-# Manually add U-Boot and GRUB
-add_to_licenses("git.denx.de/u-boot", KNOWN_LICENSES["GPLv2"])
-add_to_licenses("git.savannah.gnu.org/git/grub", KNOWN_LICENSES["GPLv3"])
 
 
 # Sort according to component (case insensitive).
@@ -1861,11 +1875,14 @@ for component in sorted_licenses:
     )
     component_texts.append(text)
 
-print("Third party licenses used in Mender.")
-print(separator)
-print(separator.join(component_texts))
+output_text = "Third party licenses used in Mender Client.\n"
+output_text += separator
+output_text += separator.join(component_texts)
 
-if not CALLED_FROM_RELEASE_TOOL:
-    sys.stderr.write(
-        "WARNING: It is recommended to call this tool from release_tool.py, to get the versions right.\n"
-    )
+# Write to file or stdout
+if args.output:
+    with open(args.output, "w") as f:
+        f.write(output_text)
+    sys.stderr.write(f"Licenses written to: {args.output}\n")
+else:
+    print(output_text)
