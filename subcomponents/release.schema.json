@@ -15,7 +15,7 @@
       "description": "List of components and their versions for this release",
       "items": {
         "type": "object",
-        "required": ["name", "version"],
+        "required": ["name", "version", "source"],
         "properties": {
           "name": {
             "type": "string",
@@ -25,6 +25,12 @@
           "version": {
             "type": "string",
             "description": "Version of this component in the release",
+            "minLength": 1
+          }
+          ,
+          "source": {
+            "type": "string",
+            "description": "Remote repository with the source code",
             "minLength": 1
           }
         },
