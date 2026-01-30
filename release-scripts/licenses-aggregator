@@ -12,6 +12,14 @@ from dataclasses import dataclass
 # Candidates for license files.
 LICENSE_CANDIDATES = ["LICENSE", "LICENCE", "LICENSE.txt", "LICENSE.md", "COPYING"]
 
+# Whitelisted git submodule URLs to ignore (test dependencies, not shipped code)
+IGNORED_SUBMODULE_URLS = [
+    "https://github.com/mendersoftware/mender-test-containers.git",
+    "https://github.com/mendersoftware/integration.git",
+    "https://git.cryptomilk.org/projects/cmocka.git",
+    "https://github.com/kward/shunit2",
+]
+
 # A dictionary of the licenses we have collected, key is module, value is text.
 LICENSES = {}
 
@@ -36,6 +44,52 @@ class RepoInfo:
     def repo_name(self) -> str:
         """Get repository name from path basename."""
         return os.path.basename(self.path)
+
+
+def get_ignored_submodule_paths(repo_path):
+    """
+    Parse .gitmodules file and return paths of whitelisted submodules.
+
+    Args:
+        repo_path: Path to repository root
+
+    Returns:
+        list: Paths to ignore (relative to repo root)
+    """
+    gitmodules_path = os.path.join(repo_path, ".gitmodules")
+    if not os.path.exists(gitmodules_path):
+        return []
+
+    ignored_paths = []
+    current_submodule = {}
+
+    with open(gitmodules_path, "r") as f:
+        for line in f:
+            line = line.strip()
+
+            if line.startswith("[submodule"):
+                # New submodule
+                if current_submodule.get("url") in IGNORED_SUBMODULE_URLS:
+                    if "path" in current_submodule:
+                        ignored_paths.append(current_submodule["path"])
+                current_submodule = {}
+
+            elif "=" in line:
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+
+                if key == "path":
+                    current_submodule["path"] = value
+                elif key == "url":
+                    current_submodule["url"] = value
+
+    # Last submodule
+    if current_submodule.get("url") in IGNORED_SUBMODULE_URLS:
+        if "path" in current_submodule:
+            ignored_paths.append(current_submodule["path"])
+
+    return ignored_paths
 
 
 def load_release_json(release_version):
@@ -1745,7 +1799,19 @@ def check_base_license(repopath):
 
 
 def verify_no_license_leftovers(location):
-    for path, _, files in os.walk(location):
+    ignored_submodule_paths = get_ignored_submodule_paths(location)
+
+    for path, dirs, files in os.walk(location):
+        rel_path = os.path.relpath(path, location)
+        is_ignored_submodule = any(
+            rel_path.startswith(ignored) for ignored in ignored_submodule_paths
+        )
+
+        if is_ignored_submodule:
+            # Skip this entire subtree
+            dirs[:] = []
+            continue
+
         for file in files:
             if file in LICENSE_CANDIDATES and not LICENSE_FILES_COVERED.get(
                 os.path.join(path, file)
