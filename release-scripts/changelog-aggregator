@@ -1,0 +1,355 @@
+#!/usr/bin/python3
+
+import argparse
+import json
+import os
+import pathlib
+import subprocess
+import sys
+from dataclasses import dataclass
+
+# Path to the directory of this file
+TOOL_PATH = pathlib.Path(__file__).parent.resolve()
+
+# Path to cliff.toml configuration
+CLIFF_CONFIG = os.path.join(TOOL_PATH, "cliff.toml")
+
+
+@dataclass
+class RepoInfo:
+    """Information about a repository to process."""
+
+    version: str
+    path: str
+
+    @property
+    def repo_name(self) -> str:
+        """Get repository name from path basename."""
+        return os.path.basename(self.path)
+
+
+def parse_version_range(version_range):
+    """
+    Parse version range string like '5.0.3..6.0.0'.
+
+    Args:
+        version_range: Version range string
+
+    Returns:
+        tuple: (from_version, to_version)
+
+    Raises:
+        SystemExit: If format is invalid
+    """
+    parts = version_range.split("..")
+    if len(parts) != 2:
+        sys.stderr.write(
+            f"ERROR: Invalid version range format: {version_range}\n"
+        )
+        sys.stderr.write(f"Expected format: FROM..TO (e.g., '5.0.3..6.0.0')\n")
+        sys.exit(1)
+
+    return parts[0], parts[1]
+
+
+def load_release_json(release_version):
+    """
+    Load and parse release JSON file.
+
+    Args:
+        release_version: Version string (e.g., "5.0.3")
+
+    Returns:
+        dict: Parsed JSON data
+
+    Raises:
+        SystemExit: If JSON doesn't exist or is malformed
+    """
+    json_path = os.path.join(
+        TOOL_PATH, "..", "subcomponents", "releases", f"{release_version}.json"
+    )
+
+    if not os.path.exists(json_path):
+        sys.stderr.write(f"ERROR: Release file not found: {json_path}\n")
+        sys.stderr.write(f"Available releases:\n")
+        releases_dir = os.path.join(TOOL_PATH, "..", "subcomponents", "releases")
+        if os.path.exists(releases_dir):
+            for file in sorted(os.listdir(releases_dir)):
+                if file.endswith(".json"):
+                    sys.stderr.write(f"  - {file[:-5]}\n")
+        sys.exit(1)
+
+    try:
+        with open(json_path, "r") as f:
+            return json.load(f)
+    except json.JSONDecodeError as e:
+        sys.stderr.write(f"ERROR: Malformed JSON in {json_path}: {e}\n")
+        sys.exit(1)
+
+
+def build_repos_map(json_data, repos_dir):
+    """
+    Build repository list from JSON components.
+
+    Deduplicates by repo name - multiple components can come from same repo.
+    We only care about repositories, not individual components.
+
+    Args:
+        json_data: Parsed JSON with "components" list
+        repos_dir: Base directory containing repositories
+
+    Returns:
+        list[RepoInfo]: List of RepoInfo objects
+    """
+    repos_list = []
+    seen = set()
+
+    for component in json_data["components"]:
+        # Extract repo name from source URL (e.g., "github.com/.../mender" -> "mender")
+        repo_name = component["source"].rstrip("/").split("/")[-1]
+        if repo_name not in seen:
+            seen.add(repo_name)
+            repos_list.append(
+                RepoInfo(
+                    version=component["version"],
+                    path=os.path.join(repos_dir, repo_name),
+                )
+            )
+
+    return repos_list
+
+
+def validate_repository_exists(repo_info):
+    """
+    Validate that a repository exists at expected path.
+
+    Args:
+        repo_info: RepoInfo object
+
+    Raises:
+        SystemExit: If repository doesn't exist
+    """
+    if not os.path.exists(repo_info.path):
+        sys.stderr.write(f"ERROR: Repository not found: {repo_info.path}\n")
+        sys.stderr.write(f"  Repository: {repo_info.repo_name}\n")
+        sys.exit(1)
+
+
+def get_component_version(json_data, repo_name):
+    """
+    Get version for a component from release JSON.
+
+    Args:
+        json_data: Parsed JSON with "components" list
+        repo_name: Repository name to find
+
+    Returns:
+        str: Version string or None if not found
+    """
+    for component in json_data["components"]:
+        component_repo = component["source"].rstrip("/").split("/")[-1]
+        if component_repo == repo_name:
+            return component["version"]
+    return None
+
+
+def get_tag_date(repo_path, tag):
+    """
+    Get date from git tag.
+
+    Args:
+        repo_path: Path to git repository
+        tag: Tag name
+
+    Returns:
+        str: Date in YYYY-MM-DD format or "unknown"
+    """
+    try:
+        # Try to get the tagger date first (for annotated tags)
+        output = subprocess.check_output(
+            ["git", "log", "-1", "--format=%cs", tag],
+            cwd=repo_path,
+            stderr=subprocess.DEVNULL,
+        )
+        date = output.decode().strip()
+        # If we got multiple lines, take the first one
+        if '\n' in date:
+            date = date.split('\n')[0]
+        return date
+    except subprocess.CalledProcessError:
+        return "unknown"
+
+
+def generate_changelog(repo_path, from_version, to_version):
+    """
+    Generate changelog using git-cliff.
+
+    Args:
+        repo_path: Path to git repository
+        from_version: Starting version tag
+        to_version: Ending version tag
+
+    Returns:
+        str: Generated changelog content
+
+    Raises:
+        SystemExit: If git-cliff fails
+    """
+    if not os.path.exists(CLIFF_CONFIG):
+        sys.stderr.write(f"ERROR: cliff.toml not found at {CLIFF_CONFIG}\n")
+        sys.exit(1)
+
+    try:
+        result = subprocess.run(
+            [
+                "git-cliff",
+                "--config",
+                CLIFF_CONFIG,
+                f"{from_version}..{to_version}",
+            ],
+            cwd=repo_path,
+            capture_output=True,
+            check=True,
+        )
+        output = result.stdout.decode().strip()
+
+        # Debug: show stderr if present
+        if result.stderr:
+            stderr_text = result.stderr.decode().strip()
+            if stderr_text:
+                sys.stderr.write(f"  git-cliff stderr: {stderr_text}\n")
+
+        return output
+    except subprocess.CalledProcessError as e:
+        sys.stderr.write(
+            f"ERROR: git-cliff failed for {os.path.basename(repo_path)}\n"
+        )
+        sys.stderr.write(f"  Range: {from_version}..{to_version}\n")
+        sys.stderr.write(f"  Exit code: {e.returncode}\n")
+        if e.stderr:
+            sys.stderr.write(f"  Error: {e.stderr.decode()}\n")
+        sys.exit(1)
+
+
+def clean_changelog_output(changelog, version, date):
+    """
+    Clean git-cliff output by removing header/footer markers and adjusting heading levels.
+
+    Converts:
+    - ## version headers to ### (intermediate versions)
+    - ### category headers to #### (Bug fixes, Features, etc.)
+    - Replaces ## [unreleased] with actual version info
+
+    Args:
+        changelog: Raw git-cliff output
+        version: Component version (e.g., "1.5.2")
+        date: Release date (e.g., "2025-10-11")
+
+    Returns:
+        str: Cleaned changelog content
+    """
+    lines = changelog.split("\n")
+    cleaned = []
+
+    for line in lines:
+        # Skip --- markers (header/footer)
+        if line.strip() == "---":
+            continue
+        # Replace [unreleased] headers with actual version
+        if line.strip() == "## [unreleased]":
+            cleaned.append(f"### {version} - {date}")
+            continue
+        # Convert version headers for intermediate versions
+        if line.startswith("## ") or line.startswith("### "):
+            cleaned.append("#" + line)
+            continue
+        cleaned.append(line)
+
+    return "\n".join(cleaned).strip()
+
+
+# Parse arguments
+parser = argparse.ArgumentParser(
+    description="Generate aggregated changelog for Mender Client subcomponents."
+)
+parser.add_argument(
+    "--version-range",
+    required=True,
+    help="Version range to process (e.g., '5.0.3..6.0.0')",
+)
+parser.add_argument(
+    "--repos-dir",
+    required=True,
+    help="Directory containing checked-out repositories",
+)
+parser.add_argument(
+    "--output",
+    help="Output file path (default: stdout)",
+)
+args = parser.parse_args()
+
+# Parse version range
+from_version, to_version = parse_version_range(args.version_range)
+
+# Load release JSONs
+sys.stderr.write(f"Loading release data for {from_version} and {to_version}...\n")
+from_json = load_release_json(from_version)
+to_json = load_release_json(to_version)
+
+# Build repository list from target release
+repos_list = build_repos_map(to_json, args.repos_dir)
+
+# Generate changelog for each repository
+output_parts = [f"# Mender Client {to_version}"]
+
+for repo_info in repos_list:
+    sys.stderr.write(f"Processing {repo_info.repo_name}...\n")
+
+    # Validate repository exists
+    validate_repository_exists(repo_info)
+
+    # Get version from source release
+    from_repo_version = get_component_version(from_json, repo_info.repo_name)
+
+    # Get date from target version tag
+    tag_date = get_tag_date(repo_info.path, repo_info.version)
+
+    # Generate section header
+    output_parts.append(f"\n## {repo_info.repo_name} {repo_info.version} ({tag_date})")
+
+    # Handle special cases
+    if repo_info.version == "1.0.0":
+        output_parts.append(f"\nFirst release of {repo_info.repo_name}")
+    elif from_repo_version == repo_info.version:
+        output_parts.append("\nNo changes")
+    else:
+        if from_repo_version is None:
+            sys.stderr.write(
+                f"WARNING: {repo_info.repo_name} not found in {from_version}, "
+                f"treating as new component\n"
+            )
+            output_parts.append(f"\nFirst release of {repo_info.repo_name}")
+        else:
+            # Generate changelog
+            sys.stderr.write(
+                f"  Generating changelog: {from_repo_version}..{repo_info.version}\n"
+            )
+            changelog = generate_changelog(
+                repo_info.path, from_repo_version, repo_info.version
+            )
+            cleaned_changelog = clean_changelog_output(changelog, repo_info.version, tag_date)
+
+            if cleaned_changelog:
+                output_parts.append("\n" + cleaned_changelog)
+            else:
+                output_parts.append("\nNo changelog entries found.")
+
+# Write output
+output_text = "\n".join(output_parts) + "\n"
+
+if args.output:
+    with open(args.output, "w") as f:
+        f.write(output_text)
+    sys.stderr.write(f"Changelog written to: {args.output}\n")
+else:
+    print(output_text)
