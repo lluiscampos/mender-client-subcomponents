@@ -21,6 +21,7 @@ class RepoInfo:
 
     version: str
     path: str
+    source: str
 
     @property
     def repo_name(self) -> str:
@@ -106,13 +107,15 @@ def build_repos_map(json_data, repos_dir):
 
     for component in json_data["components"]:
         # Extract repo name from source URL (e.g., "github.com/.../mender" -> "mender")
-        repo_name = component["source"].rstrip("/").split("/")[-1]
+        source = component["source"].rstrip("/")
+        repo_name = source.split("/")[-1]
         if repo_name not in seen:
             seen.add(repo_name)
             repos_list.append(
                 RepoInfo(
                     version=component["version"],
                     path=os.path.join(repos_dir, repo_name),
+                    source=source,
                 )
             )
 
@@ -353,6 +356,13 @@ repos_list = build_repos_map(to_json, args.repos_dir)
 
 # Generate changelog for each repository
 output_parts = [f"# Mender Client {to_version}"]
+
+# Add repository table
+output_parts.append("\n| Repository | Version |")
+output_parts.append("| --- | --- |")
+for repo_info in repos_list:
+    repo_link = f"[{repo_info.repo_name}](https://{repo_info.source})"
+    output_parts.append(f"| {repo_link} | {repo_info.version} |")
 
 for repo_info in repos_list:
     sys.stderr.write(f"Processing {repo_info.repo_name}...\n")
