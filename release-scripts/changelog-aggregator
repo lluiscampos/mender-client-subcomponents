@@ -199,14 +199,19 @@ def generate_changelog(repo_path, from_version, to_version):
         sys.stderr.write(f"ERROR: cliff.toml not found at {CLIFF_CONFIG}\n")
         sys.exit(1)
 
+    cmd = [
+        "git-cliff",
+        "--config",
+        CLIFF_CONFIG,
+        f"{from_version}..{to_version}",
+    ]
+
+    # Show the exact command being executed
+    sys.stderr.write(f"  Command: {' '.join(cmd)}\n")
+
     try:
         result = subprocess.run(
-            [
-                "git-cliff",
-                "--config",
-                CLIFF_CONFIG,
-                f"{from_version}..{to_version}",
-            ],
+            cmd,
             cwd=repo_path,
             capture_output=True,
             check=True,
