@@ -58,21 +58,21 @@ release:candidate:update-changelog:
         exit 1
       fi
     # Setup git configuration
-    - git config --global user.name "mender-test-bot"
+    - git config --global user.name "lluiscampos"
     - git config --global user.email "mender@northern.tech"
     - export GITHUB_TOKEN=${GITHUB_BOT_TOKEN_REPO_FULL}
     - git remote add github-${CI_JOB_ID}
-      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
+      https://lluiscampos:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
       || true  # Ignore already existing remote
     - gh repo set-default
-      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
+      https://lluiscampos:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
       # Check out master/main repos
     - |
       jq -r '.components[] | "\(.source):\(.version)"' "subcomponents/releases/next.json" |
       while IFS=: read -r source version; do
           repo_path="/tmp/repos/$(basename $source)"
           [ -d "$repo_path" ] && continue
-          auth_url="https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@${source}"
+          auth_url="https://lluiscampos:${GITHUB_BOT_TOKEN_REPO_FULL}@${source}"
           git clone "$auth_url" "$repo_path"
           git -C "$repo_path" checkout "$version"
           git -C "$repo_path" submodule update --init --recursive
@@ -82,7 +82,7 @@ release:candidate:update-changelog:
       --token=${GITHUB_BOT_TOKEN_REPO_FULL}
       --repo-url=lluiscampos/mender-client-subcomponents
       --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
-    - RELEASE_PLEASE_PR=$(gh pr list --author "mender-test-bot" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
+    - RELEASE_PLEASE_PR=$(gh pr list --author "lluiscampos" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
     - if [ -n "$RELEASE_PLEASE_PR" ]; then
     #   Generate changelog aggregation
     -   ./release-scripts/changelog-aggregator --version-next --repos-dir /tmp/repos/ --output CHANGELOG-next.md
@@ -141,7 +141,7 @@ release:candidate:tag-and-release:
         exit 1
       fi
     # Setup git configuration
-    - git config --global user.name "mender-test-bot"
+    - git config --global user.name "lluiscampos"
     - git config --global user.email "mender@northern.tech"
     - export GITHUB_TOKEN=${GITHUB_BOT_TOKEN_REPO_FULL}
   script:
