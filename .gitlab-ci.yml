@@ -147,5 +147,5 @@ release:candidate:tag-and-release:
   script:
     - release-please github-release
       --token=${GITHUB_BOT_TOKEN_REPO_FULL}
-      --repo-url=$[[ inputs.github_repo ]]
+      --repo-url=mendersoftware/mender-client-subcomponents
       --target-branch=${CI_COMMIT_REF_NAME}
