@@ -12,11 +12,6 @@
       "source": "github.com/mendersoftware/mender"
     },
     {
-      "name": "mender-binary-delta",
-      "version": "master",
-      "source": "github.com/mendersoftware/mender-binary-delta"
-    },
-    {
       "name": "mender-configure",
       "version": "master",
       "source": "github.com/mendersoftware/mender-configure-module"
@@ -31,12 +26,6 @@
       "version": "master",
       "source": "github.com/mendersoftware/mender-flash"
     },
-    {
-      "name": "mender-monitor",
-      "version": "master",
-      "source": "github.com/mendersoftware/monitor-client"
-    }
-    ,
     {
       "name": "mender-container-modules",
       "version": "main",
