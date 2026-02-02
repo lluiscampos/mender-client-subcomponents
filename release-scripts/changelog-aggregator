@@ -273,14 +273,56 @@ def clean_changelog_output(changelog, version, date):
     return "\n".join(cleaned).strip()
 
 
+def find_latest_release():
+    """
+    Find the latest release version based on semantic versioning.
+
+    Returns:
+        str: Latest release version
+
+    Raises:
+        SystemExit: If no releases are found
+    """
+    releases_dir = os.path.join(TOOL_PATH, "..", "subcomponents", "releases")
+
+    if not os.path.exists(releases_dir):
+        sys.stderr.write(f"ERROR: Releases directory not found: {releases_dir}\n")
+        sys.exit(1)
+
+    # Find all release JSON files
+    releases = []
+    for filename in os.listdir(releases_dir):
+        if filename.endswith(".json") and filename != "next.json":
+            version = filename[:-5]  # Remove .json
+            try:
+                version_parts = tuple(map(int, version.split(".")))
+                releases.append((version_parts, version))
+            except ValueError:
+                # Skip files that don't follow semantic versioning
+                continue
+
+    if not releases:
+        sys.stderr.write(f"ERROR: No release versions found in {releases_dir}\n")
+        sys.exit(1)
+
+    # Find the highest version
+    releases.sort(reverse=True)
+    return releases[0][1]
+
+
 # Parse arguments
 parser = argparse.ArgumentParser(
     description="Generate aggregated changelog for Mender Client subcomponents."
 )
-parser.add_argument(
+version_group = parser.add_mutually_exclusive_group(required=True)
+version_group.add_argument(
     "--version-range",
-    required=True,
     help="Version range to process (e.g., '5.0.3..6.0.0')",
+)
+version_group.add_argument(
+    "--version-next",
+    action="store_true",
+    help="Generate changelog from latest release to next (uses next.json)",
 )
 parser.add_argument(
     "--repos-dir",
@@ -293,8 +335,13 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-# Parse version range
-from_version, to_version = parse_version_range(args.version_range)
+# Determine version range
+if args.version_range:
+    from_version, to_version = parse_version_range(args.version_range)
+else:  # args.version_next
+    to_version = "next"
+    from_version = find_latest_release()
+    sys.stderr.write(f"Determined version range: {from_version}..{to_version}\n")
 
 # Load release JSONs
 sys.stderr.write(f"Loading release data for {from_version} and {to_version}...\n")
