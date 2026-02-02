@@ -12,11 +12,6 @@
       "source": "github.com/mendersoftware/mender"
     },
     {
-      "name": "mender-binary-delta",
-      "version": "1.5.2",
-      "source": "github.com/mendersoftware/mender-binary-delta"
-    },
-    {
       "name": "mender-configure",
       "version": "1.1.3",
       "source": "github.com/mendersoftware/mender-configure-module"
@@ -30,11 +25,6 @@
       "name": "mender-flash",
       "version": "1.0.2",
       "source": "github.com/mendersoftware/mender-flash"
-    },
-    {
-      "name": "mender-monitor",
-      "version": "1.4.3",
-      "source": "github.com/mendersoftware/monitor-client"
     }
   ]
 }
