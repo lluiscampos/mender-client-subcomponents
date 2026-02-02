@@ -12,7 +12,7 @@ release:candidate:update-changelog:
   stage: publish
   needs: []
   image:
-    name: "registry.gitlab.com/northern.tech/mender/mender-test-containers:release-please-v1-master"
+    name: node:22
     entrypoint: [""]
   rules:
     # Run on maintenance branches (1.0.x or v1.0.x format)
@@ -32,6 +32,24 @@ release:candidate:update-changelog:
     GIT_DEPTH: 0
     GIT_STRATEGY: clone
   before_script:
+    # release-please
+    - npm install -g release-please
+    # github cli
+    - mkdir -p -m 755 /etc/apt/keyrings \
+      && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+      && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+      && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+    - apt-get update && \
+      apt-get -y upgrade && \
+      apt-get install -y \
+         gh \
+         jq \
+      && rm -rf /var/lib/apt/lists/*
+    # git-cliff
+    # pin to 2.8.0 as 2.9.0 has breaking changes
+    # https://northerntech.atlassian.net/browse/QA-1148
+    - npm install -g git-cliff@2.8.0
+
     # Check required environment variables
     - |
       if [ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ]; then
@@ -84,7 +102,7 @@ release:candidate:update-changelog:
 
 release:candidate:tag-and-release:
   stage: publish
-  image: "registry.gitlab.com/northern.tech/mender/mender-test-containers:release-please-v1-master"
+  image: node:22
   needs:
     - release:candidate:update-changelog
   rules:
@@ -98,6 +116,23 @@ release:candidate:tag-and-release:
     - if: $CI_COMMIT_TAG
       when: never
   before_script:
+    # release-please
+    - npm install -g release-please
+    # github cli
+    - mkdir -p -m 755 /etc/apt/keyrings \
+      && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+      && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+      && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+    - apt-get update && \
+      apt-get -y upgrade && \
+      apt-get install -y \
+         gh \
+         jq \
+      && rm -rf /var/lib/apt/lists/*
+    # git-cliff
+    # pin to 2.8.0 as 2.9.0 has breaking changes
+    # https://northerntech.atlassian.net/browse/QA-1148
+    - npm install -g git-cliff@2.8.0
     # Check required environment variables
     - |
       if [ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ]; then
