@@ -162,3 +162,107 @@ release:licenses:publish:
       --body "Automated change to $REMOTE_LICENSE_FILE"
       --base master
       --head licenses-${CI_JOB_ID}
+
+release:candidate:update-changelog:
+  stage: publish
+  needs: []
+  image:
+    name: "registry.gitlab.com/northern.tech/mender/mender-test-containers:release-please-v1-master"
+    entrypoint: [""]
+  rules:
+    # Run on maintenance branches (1.0.x or v1.0.x format)
+    - if: $CI_COMMIT_BRANCH =~ "/^v?\\d+\\.\\d+\\.x$/"
+    # Run on default branch
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Never run on tags
+    - if: $CI_COMMIT_TAG
+      when: never
+    # Don't run on schedules, when there are no new commits
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+  variables:
+    GIT_DEPTH: 0
+    GIT_STRATEGY: clone
+  before_script:
+    # Check required environment variables
+    - |
+      if [ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ]; then
+        echo "ERROR: Missing required environment variables:"
+        echo "  - GITHUB_BOT_TOKEN_REPO_FULL: $([ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ] && echo 'NOT SET' || echo 'SET')"
+        exit 1
+      fi
+    # Setup git configuration
+    - git config --global user.name "mender-test-bot"
+    - git config --global user.email "mender@northern.tech"
+    - export GITHUB_TOKEN=${GITHUB_CLI_TOKEN}
+    - git remote add github-${CI_JOB_ID}
+      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/mendersoftware/mender-client-subcomponents
+      || true  # Ignore already existing remote
+    - gh repo set-default
+      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/mendersoftware/mender-client-subcomponents
+      # Check out master/main repos
+    - |
+      jq -r '.components[] | "\(.source):\(.version)"' "subcomponents/releases/next.json" |
+      while IFS=: read -r source version; do
+          repo_path="/tmp/repos/$(basename $source)"
+          [ -d "$repo_path" ] && continue
+          auth_url="https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@${source}"
+          git clone "$auth_url" "$repo_path"
+          git -C "$repo_path" checkout "$version"
+          git -C "$repo_path" submodule update --init --recursive
+      done
+  script:
+    - release-please release-pr
+      --token=${GITHUB_BOT_TOKEN_REPO_FULL}
+      --repo-url=mendersoftware/mender-client-subcomponents
+      --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
+    - RELEASE_PLEASE_PR=$(gh pr list --author "mender-test-bot" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
+    - if [ -n "$RELEASE_PLEASE_PR" ]; then
+    #   Generate changelog aggregation
+    -   ./release-scripts/changelog-aggregator --version-next --repos-dir /tmp/repos/ --output CHANGELOG-next.md
+    #   Override release-please changelog
+    -   cp CHANGELOG.md CHANGELOG.md.${CI_COMMIT_SHA}
+    -   gh pr checkout --force $RELEASE_PLEASE_PR
+    -   cat CHANGELOG-next.md CHANGELOG.md.${CI_COMMIT_SHA}> CHANGELOG.md
+    #   Update the PR content
+    -   git add CHANGELOG.md
+    -   git commit --amend -s --no-edit
+    -   git push github-${CI_JOB_ID} --force
+        # Update the PR body
+    -   gh pr edit $RELEASE_PLEASE_PR --body-file CHANGELOG-next.md
+    - else
+    -   echo "No release PR found, git-cliff will not be applied"
+    - fi
+
+release:candidate:tag-and-release:
+  stage: publish
+  image: "registry.gitlab.com/northern.tech/mender/mender-test-containers:release-please-v1-master"
+  needs:
+    - release:candidate:update-changelog
+  rules:
+    # Manual trigger on maintenance branches (1.0.x or v1.0.x format)
+    - if: $CI_COMMIT_BRANCH =~ "/^v?\\d+\\.\\d+\\.x$/"
+      allow_failure: true
+    # Manual trigger on default branch
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+      allow_failure: true
+    # Never run on tags
+    - if: $CI_COMMIT_TAG
+      when: never
+  before_script:
+    # Check required environment variables
+    - |
+      if [ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ]; then
+        echo "ERROR: Missing required environment variables:"
+        echo "  - GITHUB_BOT_TOKEN_REPO_FULL: $([ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ] && echo 'NOT SET' || echo 'SET')"
+        exit 1
+      fi
+    # Setup git configuration
+    - git config --global user.name "mender-test-bot"
+    - git config --global user.email "mender@northern.tech"
+    - export GITHUB_TOKEN=${GITHUB_CLI_TOKEN}
+  script:
+    - release-please github-release
+      --token=${GITHUB_BOT_TOKEN_REPO_FULL}
+      --repo-url=$[[ inputs.github_repo ]]
+      --target-branch=${CI_COMMIT_REF_NAME}
