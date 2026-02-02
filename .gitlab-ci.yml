@@ -180,6 +180,9 @@ release:candidate:update-changelog:
     # Don't run on schedules, when there are no new commits
     - if: $CI_PIPELINE_SOURCE == "schedule"
       when: never
+    # TODO: remove
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
   variables:
     GIT_DEPTH: 0
     GIT_STRATEGY: clone
