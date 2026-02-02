@@ -60,7 +60,7 @@ release:candidate:update-changelog:
     # Setup git configuration
     - git config --global user.name "mender-test-bot"
     - git config --global user.email "mender@northern.tech"
-    - export GITHUB_TOKEN=${GITHUB_CLI_TOKEN}
+    - export GITHUB_TOKEN=${GITHUB_BOT_TOKEN_REPO_FULL}
     - git remote add github-${CI_JOB_ID}
       https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
       || true  # Ignore already existing remote
@@ -143,7 +143,7 @@ release:candidate:tag-and-release:
     # Setup git configuration
     - git config --global user.name "mender-test-bot"
     - git config --global user.email "mender@northern.tech"
-    - export GITHUB_TOKEN=${GITHUB_CLI_TOKEN}
+    - export GITHUB_TOKEN=${GITHUB_BOT_TOKEN_REPO_FULL}
   script:
     - release-please github-release
       --token=${GITHUB_BOT_TOKEN_REPO_FULL}
