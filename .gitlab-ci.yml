@@ -1,167 +1,12 @@
 stages:
-  - build
-  - test
   - publish
 
-include:
-  - project: "Northern.tech/Mender/mendertesting"
-    file: ".gitlab-ci-github-status-updates.yml"
-  - component: gitlab.com/Northern.tech/Mender/mendertesting/commit-lint@master
-  - project: "Northern.tech/Mender/mendertesting"
-    file: ".gitlab-ci-check-license.yml"
-  - project: 'Northern.tech/Mender/mendertesting'
-    file: '.gitlab-ci-check-docker-build.yml'
-
 default:
-  tags:
-    - k8s-small
   retry:
     max: 2
     when:
       - runner_system_failure
       - stuck_or_timeout_failure
-
-variables:
-  # Configure container multiplatform image for build and publish
-  DOCKER_REPOSITORY: mendersoftware/mender-client-docker-addons
-  DOCKER_DIR: virtual-device
-  MULTIPLATFORM_BUILD: "true"
-  MULTIPLATFORM_PLATFORMS: "linux/amd64,linux/arm64"
-
-# Exclude non multiplatform jobs
-build:docker:
-  rules:
-    - when: never
-publish:image:
-  rules:
-    - when: never
-publish:image:mender:
-  rules:
-    - when: never
-
-test:build:inventory-script:releases:
-  stage: test
-  needs: []
-  image: debian:13-slim
-  before_script:
-    - apt-get update && apt-get install -y make jq gettext-base
-  script:
-    - |
-      for file in subcomponents/releases/*.json; do
-        rm -f inventory-script/mender-inventory-client-version
-        version=$(basename "$file" .json)
-        RELEASE=$version make build
-        cat inventory-script/mender-inventory-client-version
-        test "echo mender_client_version=$version" = "$(cat inventory-script/mender-inventory-client-version)"
-      done
-
-test:build:inventory-script:unsupported:
-  stage: test
-  needs: []
-  image: debian:13-slim
-  rules:
-    # This test is N/A from Git tags
-    - if: $CI_COMMIT_TAG
-  before_script:
-    - apt-get update && apt-get install -y make jq gettext-base
-  script:
-    - |
-      make build
-      cat inventory-script/mender-inventory-client-version
-      test "echo mender_client_version=unsupported = "$(cat inventory-script/mender-inventory-client-version)"
-
-test:validate:schema:
-  stage: test
-  needs: []
-  image: node
-  before_script:
-    - npm install --global ajv-cli
-  script:
-    - |
-      for file in subcomponents/releases/*.json; do
-        # Validate schema
-        ajv validate -s subcomponents/release.schema.json -d "$file"
-
-        # Validate filename
-        filename=$(basename "$file" .json)
-        version_field=$(node --print "require('./$file').version")
-        test "$filename" = "$version_field"
-      done
-
-release:licenses:generate:
-  stage: publish
-  rules:
-    # Generate build candidates and final tags
-    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+(-build\d+)?$/ && $CI_COMMIT_REF_PROTECTED == "true"'
-  image: python:3.14
-  needs: []
-  before_script:
-    - apt update && apt install --assume-yes jq
-    - mkdir --parents /tmp/repos
-    - RELEASE=${CI_COMMIT_TAG%-build[0-9]*}
-    - |
-      jq -r '.components[] | "\(.source):\(.version)"' "subcomponents/releases/${RELEASE}.json" |
-      while IFS=: read -r source version; do
-          repo_path="/tmp/repos/$(basename $source)"
-          [ -d "$repo_path" ] && continue
-          auth_url="https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@${source}"
-          git clone "$auth_url" "$repo_path"
-          git -C "$repo_path" checkout "$version"
-          git -C "$repo_path" submodule update --init --recursive
-      done
-  script:
-    - ./release-scripts/licenses-aggregator --release ${RELEASE} --repos-dir /tmp/repos/ --output licenses.md
-  artifacts:
-    expire_in: "1w"
-    paths:
-      - licenses.md
-
-release:licenses:publish:
-  stage: publish
-  rules:
-    # Only publish on final tags
-    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+$/ && $CI_COMMIT_REF_PROTECTED == "true"'
-      allow_failure: true
-  image: "registry.gitlab.com/northern.tech/mender/mender-test-containers:release-please-v1-master"
-  needs:
-    - job: release:licenses:generate
-      artifacts: true
-  variables:
-    GITHUB_DOCS_REPO_NAME: "mender-docs"
-    REMOTE_LICENSE_FILE: "302.Release-information/03.Open-source-licenses/03.Mender-Client/docs.md"
-  before_script:
-    # Check required environment variables
-    - |
-      if [ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ]; then
-        echo "ERROR: Missing required environment variables:"
-        echo "  - GITHUB_BOT_TOKEN_REPO_FULL: $([ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ] && echo 'NOT SET' || echo 'SET')"
-        exit 1
-      fi
-    # Setup git configuration
-    - git config --global user.name "mender-test-bot"
-    - git config --global user.email "mender@northern.tech"
-    - export GITHUB_TOKEN=${GITHUB_CLI_TOKEN}
-    - git remote add github-${CI_JOB_ID}
-      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/mendersoftware/$GITHUB_DOCS_REPO_NAME
-      || true  # Ignore already existing remote
-    - gh repo set-default
-      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/mendersoftware/$GITHUB_DOCS_REPO_NAME
-  script:
-    - git clone https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/mendersoftware/${GITHUB_DOCS_REPO_NAME}
-    - cd ${GITHUB_DOCS_REPO_NAME}
-    - git checkout -b licenses-${CI_JOB_ID}
-    - REMOTE_LICENSE_FILE="302.Release-information/03.Open-source-licenses/03.Mender-Client/docs.md"
-    - cat ../.licenses_header.md > $REMOTE_LICENSE_FILE
-    - cat ../licenses.md >> $REMOTE_LICENSE_FILE
-    - git add $REMOTE_LICENSE_FILE
-    - |
-      git commit -s -m "chore: add $CI_PROJECT_NAME open source licenses"
-    - git push origin licenses-${CI_JOB_ID}
-    - gh pr create
-      --title "Update OS licenses manifest for ${CI_PROJECT_NAME} ${CI_COMMIT_TAG}"
-      --body "Automated change to $REMOTE_LICENSE_FILE"
-      --base master
-      --head licenses-${CI_JOB_ID}
 
 release:candidate:update-changelog:
   stage: publish
@@ -199,10 +44,10 @@ release:candidate:update-changelog:
     - git config --global user.email "mender@northern.tech"
     - export GITHUB_TOKEN=${GITHUB_CLI_TOKEN}
     - git remote add github-${CI_JOB_ID}
-      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/mendersoftware/mender-client-subcomponents
+      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
       || true  # Ignore already existing remote
     - gh repo set-default
-      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/mendersoftware/mender-client-subcomponents
+      https://mender-test-bot:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
       # Check out master/main repos
     - |
       jq -r '.components[] | "\(.source):\(.version)"' "subcomponents/releases/next.json" |
@@ -217,7 +62,7 @@ release:candidate:update-changelog:
   script:
     - release-please release-pr
       --token=${GITHUB_BOT_TOKEN_REPO_FULL}
-      --repo-url=mendersoftware/mender-client-subcomponents
+      --repo-url=lluiscampos/mender-client-subcomponents
       --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
     - RELEASE_PLEASE_PR=$(gh pr list --author "mender-test-bot" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
     - if [ -n "$RELEASE_PLEASE_PR" ]; then
