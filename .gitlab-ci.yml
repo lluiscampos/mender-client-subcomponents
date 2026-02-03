@@ -82,6 +82,9 @@ release:candidate:update-changelog:
       --token=${GITHUB_BOT_TOKEN_REPO_FULL}
       --repo-url=lluiscampos/mender-client-subcomponents
       --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
+    # Tiny sleep to avoid race condition:
+    # The PR just created by release-please takes some time to be listed by GitHub API
+    - sleep 1
     - RELEASE_PLEASE_PR=$(gh pr list --author "lluiscampos" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
     - if [ -n "$RELEASE_PLEASE_PR" ]; then
     #   Generate changelog aggregation
