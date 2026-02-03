@@ -78,15 +78,7 @@ release:candidate:update-changelog:
           git -C "$repo_path" submodule update --init --recursive
       done
   script:
-    - release-please release-pr
-      --token=${GITHUB_BOT_TOKEN_REPO_FULL}
-      --repo-url=lluiscampos/mender-client-subcomponents
-      --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
-    # Tiny sleep to avoid race condition:
-    # The PR just created by release-please takes some time to be listed by GitHub API
-    - sleep 5
-    - RELEASE_PLEASE_PR=$(gh pr list --author "lluiscampos" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
-    - if [ -n "$RELEASE_PLEASE_PR" ]; then
+    - !reference [.release:candidate:update-changelog:before]
     #   Generate changelog aggregation
     -   LATEST_VERSION=$(ls subcomponents/releases/*.json | grep -v next.json | sort -V | tail -n 1 | xargs basename -s .json)
     -   if git tag | grep -q "^${LATEST_VERSION}$"; then
@@ -97,19 +89,33 @@ release:candidate:update-changelog:
     -     PREV_VERSION=$(ls subcomponents/releases/*.json | grep -v next.json | sort -V | tail -n 2 | head -n 1 | xargs basename -s .json)
     -     ./release-scripts/changelog-aggregator --version-range "${PREV_VERSION}..${LATEST_VERSION}" --repos-dir /tmp/repos/ --output CHANGELOG-next.md
     -   fi
-    #   Override release-please changelog
-    -   cp CHANGELOG.md CHANGELOG.md.${CI_COMMIT_SHA}
-    -   gh pr checkout --force $RELEASE_PLEASE_PR
-    -   cat CHANGELOG-next.md CHANGELOG.md.${CI_COMMIT_SHA}> CHANGELOG.md
-    #   Update the PR content
-    -   git add CHANGELOG.md
-    -   git commit --amend -s --no-edit
-    -   git push github-${CI_JOB_ID} --force
-        # Update the PR body
-    -   gh pr edit $RELEASE_PLEASE_PR --body-file CHANGELOG-next.md
-    - else
-    -   echo "No release PR found, git-cliff will not be applied"
-    - fi
+    - !reference [.release:candidate:update-changelog:after]
+
+.release:candidate:update-changelog:before: &release:candidate:update-changelog:before
+  - release-please release-pr
+    --token=${GITHUB_BOT_TOKEN_REPO_FULL}
+    --repo-url=lluiscampos/mender-client-subcomponents
+    --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
+  # Tiny sleep to avoid race condition:
+  # The PR just created by release-please takes some time to be listed by GitHub API
+  - sleep 5
+  - RELEASE_PLEASE_PR=$(gh pr list --author "lluiscampos" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
+  - if [ -n "$RELEASE_PLEASE_PR" ]; then
+
+.release:candidate:update-changelog:after: &release:candidate:update-changelog:after
+  #   Override release-please changelog
+  -   cp CHANGELOG.md CHANGELOG.md.${CI_COMMIT_SHA}
+  -   gh pr checkout --force $RELEASE_PLEASE_PR
+  -   cat CHANGELOG-next.md CHANGELOG.md.${CI_COMMIT_SHA}> CHANGELOG.md
+  #   Update the PR content
+  -   git add CHANGELOG.md
+  -   git commit --amend -s --no-edit
+  -   git push github-${CI_JOB_ID} --force
+      # Update the PR body
+  -   gh pr edit $RELEASE_PLEASE_PR --body-file CHANGELOG-next.md
+  - else
+  -   echo "No release PR found, git-cliff will not be applied"
+  - fi
 
 release:candidate:tag-and-release:
   stage: publish
