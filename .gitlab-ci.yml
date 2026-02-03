@@ -8,7 +8,7 @@ default:
       - runner_system_failure
       - stuck_or_timeout_failure
 
-release:candidate:update-changelog:
+release:candidate:generate-changelog:
   stage: publish
   needs: []
   image:
@@ -57,15 +57,6 @@ release:candidate:update-changelog:
         echo "  - GITHUB_BOT_TOKEN_REPO_FULL: $([ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ] && echo 'NOT SET' || echo 'SET')"
         exit 1
       fi
-    # Setup git configuration
-    - git config --global user.name "lluiscampos"
-    - git config --global user.email "mender@northern.tech"
-    - export GITHUB_TOKEN=${GITHUB_BOT_TOKEN_REPO_FULL}
-    - git remote add github-${CI_JOB_ID}
-      https://lluiscampos:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
-      || true  # Ignore already existing remote
-    - gh repo set-default
-      https://lluiscampos:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
       # Check out master/main repos
     - |
       jq -r '.components[] | "\(.source):\(.version)"' "subcomponents/releases/next.json" |
@@ -78,15 +69,6 @@ release:candidate:update-changelog:
           git -C "$repo_path" submodule update --init --recursive
       done
   script:
-    - release-please release-pr
-      --token=${GITHUB_BOT_TOKEN_REPO_FULL}
-      --repo-url=lluiscampos/mender-client-subcomponents
-      --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
-    # Tiny sleep to avoid race condition:
-    # The PR just created by release-please takes some time to be listed by GitHub API
-    - sleep 5
-    - RELEASE_PLEASE_PR=$(gh pr list --author "lluiscampos" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
-    - if [ -n "$RELEASE_PLEASE_PR" ]; then
     #   Generate changelog aggregation
     -   LATEST_VERSION=$(ls subcomponents/releases/*.json | grep -v next.json | sort -V | tail -n 1 | xargs basename -s .json)
     -   if git tag | grep -q "^${LATEST_VERSION}$"; then
@@ -97,6 +79,84 @@ release:candidate:update-changelog:
     -     PREV_VERSION=$(ls subcomponents/releases/*.json | grep -v next.json | sort -V | tail -n 2 | head -n 1 | xargs basename -s .json)
     -     ./release-scripts/changelog-aggregator --version-range "${PREV_VERSION}..${LATEST_VERSION}" --repos-dir /tmp/repos/ --output CHANGELOG-next.md
     -   fi
+  artifacts:
+    expire_in: "1w"
+    paths:
+      - CHANGELOG-next.md
+
+
+release:candidate:update-changelog:
+  stage: publish
+  needs: []
+  image:
+    name: node:22
+    entrypoint: [""]
+  rules:
+    # Run on maintenance branches (1.0.x or v1.0.x format)
+    - if: $CI_COMMIT_BRANCH =~ "/^v?\\d+\\.\\d+\\.x$/"
+    # Run on default branch
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Never run on tags
+    - if: $CI_COMMIT_TAG
+      when: never
+    # Don't run on schedules, when there are no new commits
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+      when: never
+    # TODO: remove
+    - if: '$CI_COMMIT_REF_PROTECTED == "true"'
+      when: manual
+  needs:
+    - job: release:candidate:generate-changelog
+      artifacts: true
+  variables:
+    GIT_DEPTH: 0
+    GIT_STRATEGY: clone
+  before_script:
+    # release-please
+    - npm install -g release-please
+    # github cli
+    - mkdir -p -m 755 /etc/apt/keyrings
+      && wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
+      && chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+      && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+    - apt-get update &&
+      apt-get -y upgrade &&
+      apt-get install -y
+         gh
+         jq
+      && rm -rf /var/lib/apt/lists/*
+    # git-cliff
+    # pin to 2.8.0 as 2.9.0 has breaking changes
+    # https://northerntech.atlassian.net/browse/QA-1148
+    - npm install -g git-cliff@2.8.0
+
+    # Check required environment variables
+    - |
+      if [ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ]; then
+        echo "ERROR: Missing required environment variables:"
+        echo "  - GITHUB_BOT_TOKEN_REPO_FULL: $([ -z "$GITHUB_BOT_TOKEN_REPO_FULL" ] && echo 'NOT SET' || echo 'SET')"
+        exit 1
+      fi
+    # Setup git configuration
+    - git config --global user.name "lluiscampos"
+    - git config --global user.email "mender@northern.tech"
+    - export GITHUB_TOKEN=${GITHUB_BOT_TOKEN_REPO_FULL}
+    - git remote add github-${CI_JOB_ID}
+      https://lluiscampos:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
+      || true  # Ignore already existing remote
+    - gh repo set-default
+      https://lluiscampos:${GITHUB_BOT_TOKEN_REPO_FULL}@github.com/lluiscampos/mender-client-subcomponents
+  script:
+    - release-please release-pr
+      --token=${GITHUB_BOT_TOKEN_REPO_FULL}
+      --repo-url=lluiscampos/mender-client-subcomponents
+      --target-branch=${CI_COMMIT_REF_NAME} || echo "INFO - release already exists"
+    # Tiny sleep to avoid race condition:
+    # The PR just created by release-please takes some time to be listed by GitHub API
+    - sleep 5
+    - RELEASE_PLEASE_PR=$(gh pr list --author "lluiscampos" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
+    - if [ -n "$RELEASE_PLEASE_PR" ]; then
+    #   # DONE
     #   Override release-please changelog
     -   cp CHANGELOG.md CHANGELOG.md.${CI_COMMIT_SHA}
     -   gh pr checkout --force $RELEASE_PLEASE_PR
