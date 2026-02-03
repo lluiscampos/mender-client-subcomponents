@@ -95,7 +95,7 @@ release:candidate:update-changelog:
     -   else
     #     Case 2) Not tagged, we are in the middle of the release process \o/
     -     PREV_VERSION=$(ls subcomponents/releases/*.json | grep -v next.json | sort -V | tail -n 2 | head -n 1 | xargs basename -s .json)
-    -     ./release-scripts/changelog-aggregator --version-range --version-range "${PREV_VERSION}..${LATEST_VERSION}" --repos-dir /tmp/repos/ --output CHANGELOG-next.md
+    -     ./release-scripts/changelog-aggregator --version-range "${PREV_VERSION}..${LATEST_VERSION}" --repos-dir /tmp/repos/ --output CHANGELOG-next.md
     -   fi
     #   Override release-please changelog
     -   cp CHANGELOG.md CHANGELOG.md.${CI_COMMIT_SHA}
