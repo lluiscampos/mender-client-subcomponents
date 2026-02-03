@@ -1,3 +1,32 @@
+# Mender Client next
+
+| Repository | Version |
+| --- | --- |
+| [mender](https://github.com/mendersoftware/mender) | master |
+| [mender-configure-module](https://github.com/mendersoftware/mender-configure-module) | master |
+| [mender-connect](https://github.com/mendersoftware/mender-connect) | master |
+| [mender-flash](https://github.com/mendersoftware/mender-flash) | master |
+| [mender-container-modules](https://github.com/mendersoftware/mender-container-modules) | main |
+
+## mender master (2026-02-02)
+
+No changes
+
+## mender-configure-module master (2026-02-03)
+
+No changes
+
+## mender-connect master (2026-01-13)
+
+No changes
+
+## mender-flash master (2026-01-05)
+
+No changes
+
+## mender-container-modules main (2026-01-13)
+
+No changes
 
 ---
 ## Older releases
