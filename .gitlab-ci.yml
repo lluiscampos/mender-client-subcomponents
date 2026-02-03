@@ -105,3 +105,5 @@ release:candidate:update-changelog:
     - git push github-${CI_JOB_ID} --force
       # Update the PR body
     - gh pr edit $RELEASE_CANDIDATE_PR --body-file CHANGELOG-next.md
+
+# TODO: CI job to actually update mender-docs-changelog
