@@ -88,7 +88,15 @@ release:candidate:update-changelog:
     - RELEASE_PLEASE_PR=$(gh pr list --author "lluiscampos" --head "release-please--branches--${CI_COMMIT_REF_NAME}" --json number | jq -r '.[0].number // empty')
     - if [ -n "$RELEASE_PLEASE_PR" ]; then
     #   Generate changelog aggregation
-    -   ./release-scripts/changelog-aggregator --version-next --repos-dir /tmp/repos/ --output CHANGELOG-next.md
+    -   LATEST_VERSION=$(ls subcomponents/releases/*.json | grep -v next.json | sort -V | tail -n 1 | xargs basename -s .json)
+    -   if git tag | grep -q "^${LATEST_VERSION}$"; then
+    #     Case 1) The latest json is already tagged, show next
+    -     ./release-scripts/changelog-aggregator --version-next --repos-dir /tmp/repos/ --output CHANGELOG-next.md
+    -   else
+    #     Case 2) Not tagged, we are in the middle of the release process \o/
+    -     PREV_VERSION=$(ls subcomponents/releases/*.json | grep -v next.json | sort -V | tail -n 2 | head -n 1 | xargs basename -s .json)
+    -     ./release-scripts/changelog-aggregator --version-range --version-range "${PREV_VERSION}..${LATEST_VERSION}" --repos-dir /tmp/repos/ --output CHANGELOG-next.md
+    -   fi
     #   Override release-please changelog
     -   cp CHANGELOG.md CHANGELOG.md.${CI_COMMIT_SHA}
     -   gh pr checkout --force $RELEASE_PLEASE_PR
