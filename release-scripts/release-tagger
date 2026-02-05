@@ -2393,22 +2393,12 @@ def determine_version_to_include_in_release(state, repo):
         print()
         print()
 
-        changelog_cmd = [
-            os.path.join(
-                integration_dir(), "extra/changelog-generator/changelog-generator"
-            ),
-            "--repo",
-            "%s..%s" % (prev_of_repo, follow_branch),
-        ]
-        print("cd %s && %s:" % (repo.git(), " ".join(changelog_cmd)))
-        subprocess.check_call(
-            changelog_cmd, cwd=os.path.join(state["repo_dir"], repo.git())
-        )
+        # TODO: link to GitHub PR for changelogs
 
         print_line()
         print(
-            "Above is the output of:\n\ncd %s\ngit %s\n%s\n"
-            % (repo.git(), " ".join(git_cmd), " ".join(changelog_cmd))
+            "Above is the output of:\n\ncd %s\ngit %s\n"
+            % (repo.git(), " ".join(git_cmd))
         )
 
         if prev_of_repo_independent and prev_of_repo_independent != prev_of_repo:
@@ -2453,104 +2443,6 @@ double check this.
     print()
     print_line()
     return True
-
-
-def generate_release_changelog(
-    workdir, single_repo, from_version, to_version, output_file
-):
-    """Generate changelog and write it to a file"""
-
-    release_date = execute_git(
-        None,
-        workdir if single_repo else integration_dir(),
-        [
-            "for-each-ref",
-            r"--format=%(creatordate:format:%m.%d.%Y)",
-            "refs/tags/" + to_version,
-            "refs/heads/" + to_version,
-        ],
-        capture=True,
-    )
-    release_name = "%s %s" % (
-        "Mender" if not single_repo else os.path.basename(workdir),
-        to_version,
-    )
-    release_header = "## %s\n\n_Released %s_\n\n" % (release_name, release_date)
-
-    command_args = []
-    if single_repo:
-        command_args.append("--repo")
-    else:
-        command_args.append("--base-dir")
-        command_args.append(workdir)
-    if from_version:
-        command_args.append("%s..%s" % (from_version, to_version))
-    else:
-        command_args.append(to_version)
-
-    changelog_tool = os.path.join(
-        integration_dir(), "extra/changelog-generator/changelog-generator"
-    )
-
-    def log_and_run_cmd(cmd, workdir):
-        print("Running in workdir %s command: %s" % (workdir, " ".join(cmd)))
-        return subprocess.check_output(cmd, cwd=workdir)
-
-    changelog_out = log_and_run_cmd([changelog_tool] + command_args, workdir)
-    print("Writing Release Notes for %s in %s" % (release_name, output_file))
-    with open(output_file, "w") as fd:
-        fd.write(release_header)
-        fd.write(changelog_out.decode())
-
-
-def do_generate_release_notes(
-    base_dir, version_of_integration, prev_of_integration=None
-):
-    """Generate Release Notes for given version range. If no previous version is
-    given, it is auto-detected."""
-
-    split = version_of_integration.split("..")
-    if len(split) > 1:
-        if prev_of_integration is not None:
-            raise Exception(
-                "version_of_integration is a range, and prev_of_integration is non-empty. This should not happen!"
-            )
-        prev_of_integration, version_of_integration = split[0], split[1]
-
-    Component.set_integration_version(version_of_integration)
-
-    if prev_of_integration is None:
-        tag_list = sorted_final_version_list(integration_dir())
-        prev_of_integration = find_prev_version(tag_list, version_of_integration)
-
-    # Release notes for Mender (server)
-    generate_release_changelog(
-        base_dir,
-        False,
-        prev_of_integration,
-        version_of_integration,
-        "release_notes_server.txt",
-    )
-
-    # Release notes for independent components
-    repos = Component.get_components_of_type(
-        "git",
-        only_release=True,
-        only_non_independent_component=False,
-        only_independent_component=True,
-    )
-    for repo in repos:
-        if repo.git() == "integration":
-            continue
-        version = version_of(
-            integration_dir(), repo, in_integration_version=version_of_integration,
-        )
-        prev_version = version_of(
-            integration_dir(), repo, in_integration_version=prev_of_integration,
-        )
-        workdir = os.path.join(base_dir, repo.git())
-        output_file = "release_notes_%s.txt" % repo.git()
-        generate_release_changelog(workdir, True, prev_version, version, output_file)
 
 
 def do_release(release_state_file, args):
@@ -2646,9 +2538,6 @@ def do_release(release_state_file, args):
         print("  B) Trigger new integration build using current tags")
         print("  F) Tag and push final tag, based on current build tag")
         print(
-            "  N) Generate release notes from current tag, either final tag or current build tag"
-        )
-        print(
             '  D) Update ":%s" and/or ":latest" Docker tags to current release'
             % minor_version
         )
@@ -2710,12 +2599,6 @@ def do_release(release_state_file, args):
             query_execute_git_list(git_list)
         elif reply.lower() == "b":
             trigger_build(state, tag_avail)
-        elif reply.lower() == "n":
-            # Generate release notes from tag_avail, which will either hold the final tag
-            # or the current build tag
-            do_generate_release_notes(
-                state["repo_dir"], tag_avail["integration"]["build_tag"]
-            )
         elif reply.lower() == "u":
             purge_build_tags(state, tag_avail)
         elif reply.lower() == "m":
@@ -3025,8 +2908,7 @@ def main():
         help="Used together with the `--version-of` argument to query for a version of a "
         + "service which is in the given version of integration, instead of the "
         + "currently checked out version of integration. If a range is given here "
-        + "it will return the range of the corresponding service. "
-        + "It is also used together with the `--generate-release-notes` argument.",
+        + "it will return the range of the corresponding service.",
     )
     parser.add_argument(
         "-s",
@@ -3142,12 +3024,6 @@ def main():
         "-n", "--dry-run", action="store_true", help="Don't take any action at all"
     )
     parser.add_argument(
-        "--generate-release-notes",
-        action="store_true",
-        help="Generate changelogs and statistics and put them in `release_notes_*.txt` files. "
-        + "Use `--in-integration-version` argument to choose which integration range to generate notes for.",
-    )
-    parser.add_argument(
         "--no-multiplatform",
         action="store_true",
         help="Force using legacy docker commands not compatbile with multiplatform images. ",
@@ -3198,14 +3074,6 @@ def main():
         do_release(release_state_file, args)
     elif args.select_test_suite:
         do_select_test_suite()
-    elif args.generate_release_notes:
-        if not args.in_integration_version:
-            raise Exception(
-                "--generate-release-notes requires --in-integration-version argument."
-            )
-        do_generate_release_notes(
-            os.path.dirname(integration_dir()), args.in_integration_version
-        )
     elif args.no_multiplatform:
         if not is_regctl_installed:
             raise Exception("regctl is required but not installed")
