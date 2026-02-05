@@ -694,113 +694,6 @@ def version_of(
         return data[image_name]["version"]
 
 
-def do_version_of(args):
-    """Process --version-of argument."""
-
-    if args.version_type is None:
-        version_type = "git"
-    else:
-        version_type = args.version_type
-
-    if args.in_integration_version is None:
-        # Already checked in main()
-        assert version_type == "git"
-    else:
-        assert version_type in ["docker", "git"], (
-            "%s is not a valid name type for --version-of!" % version_type
-        )
-
-    comp = None
-    try:
-        Component.set_integration_version(args.in_integration_version)
-        if version_type == "git":
-            comp = Component.get_component_of_type("git", args.version_of)
-        elif version_type == "docker":
-            comp = Component.get_component_of_type("docker_image", args.version_of)
-    except KeyError:
-        try:
-            comp = Component.get_component_of_any_type(args.version_of)
-        except KeyError:
-            print("Unrecognized repository: %s" % args.version_of)
-            sys.exit(1)
-
-    print(
-        version_of(
-            integration_dir(),
-            comp,
-            args.in_integration_version,
-            git_version=(version_type == "git"),
-        )
-    )
-
-
-def do_list_repos(args, optional_too, only_backend, only_client):
-    """Lists the repos, using the provided type."""
-
-    cli_types = {
-        "container": "docker_container",
-        "docker": "docker_image",
-        "git": "git",
-    }
-    assert args.list in cli_types.keys(), "%s is not a valid name type!" % args.list
-    type = cli_types[args.list]
-
-    assert args.list_format in ["simple", "table", "json"], (
-        "%s is not a valid name list format!" % args.list_format
-    )
-
-    Component.set_integration_version(args.in_integration_version)
-    repos = Component.get_components_of_type(
-        type,
-        only_release=(not optional_too),
-        only_non_independent_component=(only_backend),
-        only_independent_component=(only_client),
-    )
-    repos.sort(key=lambda x: x.name)
-
-    if args.list_format == "simple":
-        print("\n".join([r.name for r in repos]))
-        return
-
-    repos_versions_dict = {}
-    for repo in repos:
-        try:
-            repos_versions_dict[repo.name] = version_of(
-                integration_dir(),
-                repo,
-                args.in_integration_version,
-                git_version=(args.list == "git"),
-            )
-        except KeyError:
-            # This repo doesn't exist in the given integration version
-            repos_versions_dict[repo.name] = "UNRELEASED"
-
-    if args.list_format == "table":
-        name_len_max = str(max([len(r) for r in repos_versions_dict.keys()]))
-        version_len_max = str(max([len(r) for r in repos_versions_dict.values()]))
-        row_format = "| {:<" + name_len_max + "} | {:<" + version_len_max + "} |"
-        print(row_format.format("COMPONENT", "VERSION"))
-        print(
-            "\n".join(
-                [
-                    row_format.format(name, version)
-                    for name, version in repos_versions_dict.items()
-                ]
-            )
-        )
-    elif args.list_format == "json":
-        json_object = {
-            "release": repos_versions_dict["integration"],
-            "repos": list(
-                map(
-                    lambda item: {"name": item[0], "version": item[1]},
-                    repos_versions_dict.items(),
-                )
-            ),
-        }
-        print(json.dumps(json_object))
-
-
 def version_sort_key(version):
     """Returns a key used to compare versions."""
 
@@ -2616,14 +2509,6 @@ def do_release(release_state_file, args):
             print("Invalid choice!")
 
 
-def do_set_version_to(args):
-    """Handles --set-version-of argument."""
-
-    # We only modify the git files
-    component = Component.get_component_of_type("git", args.set_version_of)
-    set_component_version_to(integration_dir(), component, args.version)
-
-
 def is_marked_as_releaseable_in_integration_version(
     integration_version, repo_git, repo_git_version
 ):
@@ -2664,88 +2549,6 @@ def is_marked_as_releaseable_in_integration_version(
     return comp.is_release_component()
 
 
-def do_integration_versions_including(args):
-    if not args.version:
-        print("--integration-versions-including requires --version argument")
-        sys.exit(2)
-
-    if args.version_type is not None and args.version_type != "git":
-        print(
-            'Only "--version-type git" is supported for --integration-versions-including".'
-        )
-        sys.exit(2)
-
-    try:
-        repo = Component.get_component_of_any_type(args.integration_versions_including)
-    except KeyError:
-        print("Unrecognized repository: %s" % args.integration_versions_including)
-        sys.exit(1)
-
-    git_dir = integration_dir()
-    remote = find_upstream_remote(None, git_dir, "integration")
-    # The below query will match all tags and the following branches: master, staging and releases (N.M.x)
-    git_query = [
-        "for-each-ref",
-        "--format=%(refname:short)",
-        "--sort=-version:refname:short",
-        "refs/tags/*",
-        "refs/remotes/%s/master" % remote,
-        "refs/remotes/%s/staging" % remote,
-        "refs/remotes/%s/[0-9].[0-9].x" % remote,
-        "refs/remotes/%s/[0-9][0-9].[0-9].x" % remote,
-        "refs/remotes/%s/[0-9].[0-9][0-9].x" % remote,
-        "refs/remotes/%s/[0-9][0-9].[0-9][0-9].x" % remote,
-    ]
-    if args.all:
-        git_query += ["refs/heads/**"]
-    if args.feature_branches:
-        git_query += ["refs/remotes/%s/feature-*" % remote]
-    output = execute_git(None, git_dir, git_query, capture=True)
-    candidates = []
-    for line in output.strip().split("\n"):
-        # Filter out build tags.
-        if re.search("-build", line):
-            continue
-
-        candidates.append(line)
-
-    image = repo.associated_components_of_type("git")[0].git()
-
-    # Now look at each docker compose file in each branch, and figure out which
-    # ones contain the version of the service we are querying.
-    matches = []
-    for candidate in candidates:
-        data = get_docker_compose_data_for_rev(git_dir, candidate, version="git")
-        # For pre 2.4.x releases git-versions.*.yml files do not exist hence this listing
-        # would be missing the backend components. Try loading the old "docker" versions.
-        if data.get(image) is None:
-            data = get_docker_compose_data_for_rev(git_dir, candidate, version="docker")
-        try:
-            version = data[image]["version"]
-        except KeyError:
-            # Key image doesn't exist because the version is from before
-            # that component existed.
-            # Not a match.
-            continue
-
-        try:
-            if not is_marked_as_releaseable_in_integration_version(
-                candidate, repo.git(), args.version
-            ):
-                continue
-        except KeyError:
-            # Key repo.git() doesn't exist (but Docker component existed). This
-            # can happen when several git repos contribute to one Docker image.
-            # Not a match.
-            continue
-
-        if version == args.version:
-            matches.append(candidate)
-
-    for match in matches:
-        print(match)
-
-
 def find_repo_path(name, paths):
     """Try to find the git repo 'name' under some known paths.
     Return abspath or None if not found.
@@ -2756,34 +2559,6 @@ def find_repo_path(name, paths):
             return path
 
     return None
-
-
-def do_map_name(args):
-    int_dir = integration_dir()
-    if args.in_integration_version:
-        data = get_docker_compose_data_for_rev(
-            int_dir, args.in_integration_version, version="docker"
-        )
-    else:
-        data = get_docker_compose_data(int_dir, version="docker")
-
-    cli_types = {
-        "container": "docker_container",
-        "docker": "docker_image",
-        "git": "git",
-    }
-    comp = Component.get_component_of_type(
-        cli_types[args.map_name[0]], args.map_name[1]
-    )
-    if args.map_name[2] == "docker_url":
-        to_type = "docker_image"
-    else:
-        to_type = cli_types[args.map_name[2]]
-    for result in comp.associated_components_of_type(to_type):
-        if args.map_name[2] == "docker_url":
-            print("%s/%s" % (data[result.name]["image_prefix"], result.name))
-        else:
-            print(result.name)
 
 
 def is_repo_on_known_branch(path):
@@ -2884,60 +2659,6 @@ def is_regctl_installed():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-g",
-        "--version-of",
-        dest="version_of",
-        metavar="SERVICE",
-        help="Get version of given service",
-    )
-    parser.add_argument(
-        "-t",
-        "--version-type",
-        dest="version_type",
-        metavar="git|docker|all",
-        default="git",
-        help="Used together with --version-of and --set-version-of to specify "
-        "the type of version to query. "
-        'Only "git" is supported, the other values are only allowed in combination with --in-integration-version.',
-    )
-    parser.add_argument(
-        "-i",
-        "--in-integration-version",
-        dest="in_integration_version",
-        metavar="VERSION",
-        help="Used together with the `--version-of` argument to query for a version of a "
-        + "service which is in the given version of integration, instead of the "
-        + "currently checked out version of integration. If a range is given here "
-        + "it will return the range of the corresponding service.",
-    )
-    parser.add_argument(
-        "-s",
-        "--set-version-of",
-        dest="set_version_of",
-        metavar="SERVICE",
-        help="Write version of given service into docker-compose.yml",
-    )
-    parser.add_argument(
-        "-f",
-        "--integration-versions-including",
-        dest="integration_versions_including",
-        metavar="SERVICE",
-        help="Find version(s) of integration repository that contain the given version of SERVICE, "
-        + " where version is given with --version. Returned as a newline separated list",
-    )
-    parser.add_argument(
-        "--feature-branches",
-        action="store_true",
-        default=False,
-        help="When used with `--integration-versions-including`, include upstream feature branches",
-    )
-    parser.add_argument(
-        "-v",
-        "--version",
-        dest="version",
-        help="Version which is used in above two arguments",
-    )
-    parser.add_argument(
         "-b",
         "--build",
         dest="build",
@@ -2955,54 +2676,6 @@ def main():
         + "that should be triggered with the rest of the repository versions. It is "
         + "also possible to specify a branch name instead of a pull request number. "
         + "May be specified more than once.",
-    )
-    parser.add_argument(
-        "-l",
-        "--list",
-        metavar="container|docker|git",
-        dest="list",
-        const="git",
-        nargs="?",
-        help="List the Mender repositories in use for this release. The optional "
-        + "argument determines which type of name is returned. The default is git. "
-        + "By default does not list optional repositories.",
-    )
-    parser.add_argument(
-        "-a",
-        "--all",
-        action="store_true",
-        default=False,
-        help="When used with `--list`, list all repositories, including optional ones. "
-        + "When used with `--integration-versions-including`, include local branches in addition to upstream branches.",
-    )
-    parser.add_argument(
-        "--only-backend",
-        action="store_true",
-        default=False,
-        help="When used with `--list`, list only backend repositories; ignored otherwise",
-    )
-    parser.add_argument(
-        "--only-client",
-        action="store_true",
-        default=False,
-        help="When used with `--list`, list only non-backend repositories; ignored otherwise",
-    )
-    parser.add_argument(
-        "--list-format",
-        metavar="simple|table|json",
-        default="simple",
-        nargs="?",
-        help="When used with `--list`, 'simple' prints only the repos, 'table' adds the versions "
-        + "of each component in a table format, and 'json' composes a json object",
-    )
-    parser.add_argument(
-        "-m",
-        "--map-name",
-        metavar=("FROM-TYPE", "SERVICE", "TO-TYPE"),
-        dest="map_name",
-        nargs=3,
-        help="Map the SERVICE name from one type to another. FROM-TYPE and TO-TYPE may be git, docker "
-        + "or container. TO-TYPE may additionally be docker_url. May return more than one result.",
     )
     parser.add_argument(
         "--release", action="store_true", help="Start the release process (interactive)"
@@ -3030,19 +2703,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Check conflicting options.
-    operations = 0
-    for operation in [args.version_of, args.release, args.set_version_of]:
-        if operation:
-            operations = operations + 1
-    if operations > 1:
-        print("--version-of, --set-version-of and --release are mutually exclusive!")
-        sys.exit(1)
-
-    # Check legacy options.
-    if args.version_type != "git" and not args.in_integration_version:
-        raise Exception('Only "--version-type git" is supported!.')
-
     if args.simulate_push:
         global PUSH
         PUSH = False
@@ -3050,23 +2710,8 @@ def main():
         global DRY_RUN
         DRY_RUN = True
 
-    if args.version_of is not None:
-        do_version_of(args)
-    elif args.list is not None:
-        do_list_repos(
-            args,
-            optional_too=args.all,
-            only_backend=args.only_backend,
-            only_client=args.only_client,
-        )
-    elif args.set_version_of is not None:
-        do_set_version_to(args)
-    elif args.integration_versions_including is not None:
-        do_integration_versions_including(args)
-    elif args.build:
+    if args.build:
         do_build(args)
-    elif args.map_name:
-        do_map_name(args)
     elif args.release:
         release_state_file = "release-state.yml"
         if args.release_state_file:
