@@ -1818,55 +1818,6 @@ def trigger_gitlab_build(params, extra_buildparams):
         traceback.print_exc()
 
 
-def do_license_generation(state, tag_avail):
-    print("Setting up temporary Git workspace...")
-
-    def tag_or_followed_branch(repo_git):
-        if tag_avail[repo_git].get("build_tag") is None:
-            return state[repo_git]["following"]
-        else:
-            return tag_avail[repo_git]["build_tag"]
-
-    tmpdirs = []
-    for repo in Component.get_components_of_type("git", only_release=True):
-        tmpdirs.append(
-            setup_temp_git_checkout(
-                state, repo.git(), tag_or_followed_branch(repo.git())
-            )
-        )
-    for repo in Component.get_components_of_type("git", only_non_release=True):
-        remote = find_upstream_remote(state, repo.git())
-        tmpdirs.append(setup_temp_git_checkout(state, repo.git(), remote + "/master"))
-
-    try:
-        with open("generated-license-text.txt", "w") as fd:
-            subprocess.check_call(
-                [
-                    os.path.realpath(
-                        os.path.join(
-                            os.path.dirname(sys.argv[0]), "license-overview-generator"
-                        )
-                    ),
-                    "--called-from-release-tool",
-                    "--dir",
-                    os.path.dirname(tmpdirs[0]),
-                ],
-                stdout=fd,
-            )
-
-    except subprocess.CalledProcessError:
-        print()
-        print("Command failed with the above error.")
-        return
-    finally:
-        for tmpdir in tmpdirs:
-            cleanup_temp_git_checkout(tmpdir)
-
-    print_line()
-    print("License overview successfully generated!")
-    print("Output is captured in generated-license-text.txt.")
-
-
 def set_component_version_to(dir, component, tag):
     """Modifies yml files in the given directory so that the image label points to
     the given tag. It uses the component type to decide which file to put the
@@ -2693,7 +2644,6 @@ def do_release(release_state_file, args):
         print("  R) Refresh all repositories from upstream (git fetch)")
         print("  T) Generate and push new build tags")
         print("  B) Trigger new integration build using current tags")
-        print("  L) Generate license text for all dependencies")
         print("  F) Tag and push final tag, based on current build tag")
         print(
             "  N) Generate release notes from current tag, either final tag or current build tag"
@@ -2760,8 +2710,6 @@ def do_release(release_state_file, args):
             query_execute_git_list(git_list)
         elif reply.lower() == "b":
             trigger_build(state, tag_avail)
-        elif reply.lower() == "l":
-            do_license_generation(state, tag_avail)
         elif reply.lower() == "n":
             # Generate release notes from tag_avail, which will either hold the final tag
             # or the current build tag
