@@ -1936,39 +1936,15 @@ def push_latest_docker_tags(state, tag_avail, args):
             else:
                 build_tag = tag_avail["image_tag"]
 
-            if args.no_multiplatform:
-                exec_list.append(
-                    [
-                        "docker",
-                        "pull",
-                        "%s/%s:%s" % (prefix, image.docker_image(), build_tag,),
-                    ]
-                )
-                exec_list.append(
-                    [
-                        "docker",
-                        "tag",
-                        "%s/%s:%s" % (prefix, image.docker_image(), build_tag,),
-                        "%s/%s:%s" % (prefix, image.docker_image(), new_version),
-                    ]
-                )
-                exec_list.append(
-                    [
-                        "docker",
-                        "push",
-                        "%s/%s:%s" % (prefix, image.docker_image(), new_version),
-                    ]
-                )
-            else:
-                exec_list.append(
-                    [
-                        "regctl",
-                        "image",
-                        "copy",
-                        "%s/%s:%s" % (prefix, image.docker_image(), build_tag,),
-                        "%s/%s:%s" % (prefix, image.docker_image(), new_version),
-                    ]
-                )
+            exec_list.append(
+                [
+                    "regctl",
+                    "image",
+                    "copy",
+                    "%s/%s:%s" % (prefix, image.docker_image(), build_tag,),
+                    "%s/%s:%s" % (prefix, image.docker_image(), new_version),
+                ]
+            )
 
         query_execute_list(exec_list)
 
@@ -2549,15 +2525,6 @@ def is_marked_as_releaseable_in_integration_version(
     return comp.is_release_component()
 
 
-def is_regctl_installed():
-    """Check if regctl client is installed"""
-    try:
-        subprocess.run(["regctl", "version"])
-        return True
-    except:
-        return False
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -2593,11 +2560,6 @@ def main():
     parser.add_argument(
         "-n", "--dry-run", action="store_true", help="Don't take any action at all"
     )
-    parser.add_argument(
-        "--no-multiplatform",
-        action="store_true",
-        help="Force using legacy docker commands not compatbile with multiplatform images. ",
-    )
     args = parser.parse_args()
 
     if args.simulate_push:
@@ -2614,9 +2576,6 @@ def main():
         if args.release_state_file:
             release_state_file = args.release_state_file
         do_release(release_state_file, args)
-    elif args.no_multiplatform:
-        if not is_regctl_installed:
-            raise Exception("regctl is required but not installed")
     else:
         parser.print_help()
         sys.exit(1)
