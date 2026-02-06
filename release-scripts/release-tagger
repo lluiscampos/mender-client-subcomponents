@@ -382,14 +382,13 @@ def init_gitlab_creds():
 
 
 def integration_dir():
-    """Return the location of the integration repository."""
+    """Return the location of the mender-client-subcomponents repository.
 
-    if os.path.isabs(sys.argv[0]):
-        return os.path.normpath(os.path.dirname(os.path.dirname(sys.argv[0])))
-    else:
-        return os.path.normpath(
-            os.path.join(os.getcwd(), os.path.dirname(sys.argv[0]), "..")
-        )
+    Note: This function is kept for backward compatibility but now points to
+    mender-client-subcomponents instead of the deprecated integration repo.
+    New code should use subcomponents_dir() instead.
+    """
+    return subcomponents_dir()
 
 
 def ask(text):
@@ -401,6 +400,253 @@ def ask(text):
     # Make a separator before next information chunk.
     sys.stdout.write("\n")
     return reply
+
+
+# ============================================================================
+# JSON Data Layer Functions
+# ============================================================================
+
+def read_release_json(json_path):
+    """Read and parse a release JSON file.
+
+    Args:
+        json_path: Absolute path to JSON file
+
+    Returns:
+        dict: {
+            'version': str,
+            'components': [
+                {'name': str, 'version': str, 'source': str}
+            ]
+        }
+    """
+    with open(json_path, 'r') as fd:
+        return json.load(fd)
+
+
+def write_release_json(json_path, data):
+    """Write release data to JSON file with proper formatting.
+
+    Args:
+        json_path: Absolute path to JSON file
+        data: Dict with 'version' and 'components' keys
+    """
+    with open(json_path, 'w') as fd:
+        json.dump(data, fd, indent=2)
+        fd.write('\n')  # Add trailing newline
+
+
+def get_component_list_from_json(json_data):
+    """Extract component list from JSON.
+
+    Args:
+        json_data: Parsed JSON dict
+
+    Returns:
+        list: List of component dicts with name, version, source
+    """
+    return json_data.get('components', [])
+
+
+def find_component_in_json(json_data, component_name):
+    """Find specific component in JSON data.
+
+    Args:
+        json_data: Parsed JSON dict
+        component_name: Name of component to find
+
+    Returns:
+        dict: Component dict or None if not found
+    """
+    for component in get_component_list_from_json(json_data):
+        if component['name'] == component_name:
+            return component
+    return None
+
+
+def extract_repo_name_from_source(source):
+    """Extract repository name from source URL.
+
+    Args:
+        source: Source URL (e.g., 'github.com/mendersoftware/mender')
+
+    Returns:
+        str: Repository name (e.g., 'mender')
+
+    Examples:
+        'github.com/mendersoftware/mender' -> 'mender'
+        'github.com/mendersoftware/mender-connect' -> 'mender-connect'
+    """
+    # Take the last part of the path
+    return source.rstrip('/').split('/')[-1]
+
+
+def get_unique_sources_from_json(json_data):
+    """Get list of unique source repositories from JSON.
+
+    Args:
+        json_data: Parsed JSON dict
+
+    Returns:
+        list: List of unique source URLs (deduplicated)
+    """
+    sources = set()
+    for component in get_component_list_from_json(json_data):
+        sources.add(component['source'])
+    return sorted(sources)
+
+
+def get_source_for_component(json_data, component_name):
+    """Get the source repository for a component.
+
+    Args:
+        json_data: Parsed JSON dict
+        component_name: Name of component
+
+    Returns:
+        str: Source URL or None if component not found
+    """
+    component = find_component_in_json(json_data, component_name)
+    return component['source'] if component else None
+
+
+def get_components_for_source(json_data, source):
+    """Get all component names that share the same source repository.
+
+    Args:
+        json_data: Parsed JSON dict
+        source: Source URL
+
+    Returns:
+        list: List of component names (e.g., ['mender-auth', 'mender-update'])
+    """
+    components = []
+    for component in get_component_list_from_json(json_data):
+        if component['source'] == source:
+            components.append(component['name'])
+    return sorted(components)
+
+
+def get_repos_from_json(json_data):
+    """Get list of unique repositories with their component mappings.
+
+    Args:
+        json_data: Parsed JSON dict
+
+    Returns:
+        list: List of dicts with:
+            - 'repo': repository name (e.g., 'mender')
+            - 'source': full source URL
+            - 'components': list of component names using this repo
+            - 'version': version/branch from first component (they all match)
+    """
+    repos = []
+    for source in get_unique_sources_from_json(json_data):
+        repo_name = extract_repo_name_from_source(source)
+        components = get_components_for_source(json_data, source)
+        # Get version from first component (they all have same version per repo)
+        first_component = find_component_in_json(json_data, components[0])
+        version = first_component['version'] if first_component else None
+
+        repos.append({
+            'repo': repo_name,
+            'source': source,
+            'components': components,
+            'version': version
+        })
+    return repos
+
+
+def subcomponents_dir():
+    """Return the mender-client-subcomponents repository directory.
+
+    Assumes the tool is running from within the mender-client-subcomponents repo.
+    """
+    # Get the directory containing this script
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Go up one level to get to repo root
+    return os.path.dirname(script_dir)
+
+
+def get_current_release_json_path(state=None, version=None):
+    """Determine which JSON file to read based on current context.
+
+    Args:
+        state: Release state dict (optional)
+        version: Specific version to look for (optional)
+
+    Returns:
+        str: Absolute path to JSON file
+
+    Logic:
+        - If version specified: look for that specific JSON
+        - If in release state: determine from state version
+        - Otherwise: return next.json
+    """
+    base_dir = subcomponents_dir()
+    releases_dir = os.path.join(base_dir, "subcomponents", "releases")
+
+    target_version = version if version else (state.get("version") if state else None)
+
+    if not target_version:
+        # Default to next.json
+        return os.path.join(releases_dir, "next.json")
+
+    # Check for exact match first (e.g., "5.0.0.json")
+    exact_path = os.path.join(releases_dir, f"{target_version}.json")
+    if os.path.exists(exact_path):
+        return exact_path
+
+    # Check for release branch JSON (e.g., "5.0.x.json" for version "5.0.0")
+    if re.match(r'^\d+\.\d+\.\d+', target_version):
+        parts = target_version.split('.')
+        release_branch_json = f"{parts[0]}.{parts[1]}.x.json"
+        branch_path = os.path.join(releases_dir, release_branch_json)
+        if os.path.exists(branch_path):
+            return branch_path
+
+    # Fall back to next.json
+    return os.path.join(releases_dir, "next.json")
+
+
+def get_components_from_current_json(state):
+    """Get component list from appropriate JSON file based on state.
+
+    DEPRECATED: Use get_repos_from_current_json() instead.
+    This function returns raw component list which may have duplicates
+    for repos with multiple components.
+
+    Args:
+        state: Release state dict
+
+    Returns:
+        list: List of component dicts
+    """
+    json_path = get_current_release_json_path(state)
+    json_data = read_release_json(json_path)
+    return get_component_list_from_json(json_data)
+
+
+def get_repos_from_current_json(state):
+    """Get repository list from appropriate JSON file based on state.
+
+    This returns unique repositories, not components. Use this for
+    git operations (tagging, branching, etc.) to avoid duplicates.
+
+    Args:
+        state: Release state dict
+
+    Returns:
+        list: List of repo dicts with 'repo', 'source', 'components', 'version'
+    """
+    json_path = get_current_release_json_path(state)
+    json_data = read_release_json(json_path)
+    return get_repos_from_json(json_data)
+
+
+# ============================================================================
+# End of JSON Data Layer Functions
+# ============================================================================
 
 
 def filter_docker_compose_files_list(list, version):
@@ -579,119 +825,66 @@ def get_docker_compose_data_for_rev(git_dir, rev, version="git"):
         raise Exception("Cannot get docker-compose data for %s" % rev) from ex
 
 
-def version_of(
-    integration_dir, component, in_integration_version=None, git_version=True
-):
-    git_components = component.associated_components_of_type("git")
-    docker_components = component.associated_components_of_type("docker_image")
-    if git_version:
-        if len(git_components) != 1:
-            raise Exception(
-                "Component %s (type: %s) can not be mapped "
-                "to a single git component, so its version is ambiguous. "
-                "Candidates: (%s)"
-                % (
-                    component.name,
-                    component.type,
-                    ", ".join([c.name for c in git_components]),
-                )
-            )
-        image_name = git_components[0].git()
-    else:
-        if len(docker_components) != 1:
-            raise Exception(
-                "Component %s (type: %s) can not be mapped "
-                "to a single docker component, so its version is ambiguous. "
-                "Candidates: (%s)"
-                % (
-                    component.name,
-                    component.type,
-                    ", ".join([c.name for c in docker_components]),
-                )
-            )
-        image_name = docker_components[0].docker_image()
+def version_of(repo_dir, repo_name, in_release_version=None):
+    """Get version of a repository from JSON files.
 
-    if git_version and git_components[0].git() == "integration":
-        if in_integration_version is not None:
-            # Just return the supplied version string.
-            return in_integration_version
-        else:
-            # Return "closest" branch or tag name. Basically we measure the
-            # distance in commits from the merge base of most refs to the
-            # current HEAD, and then pick the shortest one, and we assume that
-            # this is our current version. We pick all the refs from tags and
-            # local branches, as well as single level upstream branches (which
-            # avoids pull requests).
-            return (
-                subprocess.check_output(
-                    """
-                for i in $(git for-each-ref --format='%(refname:short)' 'refs/tags/*' 'refs/heads/*' 'refs/remotes/*/*'); do
-                    echo $(git log --oneline $(git merge-base $i HEAD)..HEAD | wc -l) $i
-                done | sort -n | head -n1 | awk '{print $2}'
-            """,
-                    shell=True,
-                    cwd=integration_dir,
-                )
-                .strip()
-                .decode()
-            )
+    Note: This function now works with REPOSITORY NAMES, not component names.
+    Multiple components can share the same repository (e.g., 'mender-auth' and
+    'mender-update' both use the 'mender' repository).
 
-    if in_integration_version is not None:
-        # Check if there is a range, and if so, return range.
-        range_type = ""
-        rev_range = in_integration_version.split("...")
+    Args:
+        repo_dir: Base directory - kept for compatibility but not used
+        repo_name: Name of repository (e.g., 'mender', 'mender-connect')
+                  NOT component name (not 'mender-auth')
+        in_release_version: Which release to query (e.g., '5.0.0', '6.0.x', 'next')
+                           Can also be a range like '5.0.0..6.0.0'
+
+    Returns:
+        str: Version string (branch name, tag, or version number)
+             For ranges, returns range in same format (e.g., '4.0.0..5.0.0')
+    """
+    # Check if there is a range, and if so, return range
+    range_type = ""
+    rev_range = None
+
+    if in_release_version:
+        rev_range = in_release_version.split("...")
         if len(rev_range) > 1:
             range_type = "..."
         else:
-            rev_range = in_integration_version.split("..")
+            rev_range = in_release_version.split("..")
             if len(rev_range) > 1:
                 range_type = ".."
+            else:
+                rev_range = None
 
+    if rev_range:
+        # Handle range: return repo version from each end
         repo_range = []
         for rev in rev_range:
-            # Figure out if the user string contained a remote or not
-            remote = ""
-            split = rev.split("/", 1)
-            if len(split) > 1:
-                remote_candidate = split[0]
-                ref_name = split[1]
-                if (
-                    subprocess.call(
-                        "git rev-parse -q --verify refs/heads/%s > /dev/null"
-                        % ref_name,
-                        shell=True,
-                        cwd=integration_dir,
-                    )
-                    == 0
-                ):
-                    remote = remote_candidate + "/"
-
-            if not git_version:
-                data = get_docker_compose_data_for_rev(integration_dir, rev, "docker")
-            else:
-                data = get_docker_compose_data_for_rev(integration_dir, rev, "git")
-                # For pre 2.4.x releases git-versions.*.yml files do not exist hence this listing
-                # would be missing the backend components. Try loading the old "docker" versions.
-                if data.get(image_name) is None:
-                    data = get_docker_compose_data_for_rev(
-                        integration_dir, rev, "docker"
-                    )
-            # If the repository didn't exist in that version, just return all
-            # commits in that case, IOW no lower end point range.
-            if data.get(image_name) is not None:
-                version = data[image_name]["version"]
-                # If it is a tag, do not prepend remote name
-                if re.search(r"^[0-9]+\.[0-9]+\.[0-9]+$", version):
-                    repo_range.append(version)
-                else:
-                    repo_range.append(remote + version)
+            json_path = get_current_release_json_path(version=rev)
+            json_data = read_release_json(json_path)
+            # Find any component using this repo
+            repos = get_repos_from_json(json_data)
+            repo_info = None
+            for r in repos:
+                if r['repo'] == repo_name:
+                    repo_info = r
+                    break
+            if repo_info:
+                repo_range.append(repo_info['version'])
+            # If repo doesn't exist in that version, skip it (returns empty range end)
         return range_type.join(repo_range)
     else:
-        if not git_version:
-            data = get_docker_compose_data(integration_dir, "docker")
-        else:
-            data = get_docker_compose_data(integration_dir, "git")
-        return data[image_name]["version"]
+        # Single version lookup
+        json_path = get_current_release_json_path(version=in_release_version)
+        json_data = read_release_json(json_path)
+        # Find any component using this repo
+        repos = get_repos_from_json(json_data)
+        for repo_info in repos:
+            if repo_info['repo'] == repo_name:
+                return repo_info['version']
+        raise KeyError(f"Repository '{repo_name}' not found in release {in_release_version or 'current'}")
 
 
 def version_sort_key(version):
