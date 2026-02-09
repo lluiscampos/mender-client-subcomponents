@@ -1209,65 +1209,69 @@ def check_tag_availability(state):
 
     The main fields in this one are:
       image_tag: <highest Docker tag, or final Docker tag (i.e. mender-X.Y.Z)>
-      <repo>:
+      <repo_name>:
         already_released: <whether this is a final release tag or not (true/false)>
         build_tag: <highest Git build tag, or final Git tag>
-        following: <branch we pick next build tag from>
         sha: <SHA of current build tag>
     """
 
     tag_avail = {}
     highest_overall = -1
     all_released = True
-    for repo in Component.get_components_of_type("git"):
-        tag_avail[repo.git()] = {}
-        missing_repos = False
+
+    # Get unique repositories from JSON (source-based deduplication)
+    repos = get_repos_from_current_json(state)
+
+    missing_repos = False
+    for repo_info in repos:
+        repo_name = repo_info['repo']
+        tag_avail[repo_name] = {}
+
         try:
             execute_git(
                 state,
-                repo.git(),
-                ["rev-parse", state[repo.git()]["version"]],
+                repo_name,
+                ["rev-parse", state[repo_name]["version"]],
                 capture=True,
                 capture_stderr=True,
             )
-            # No exception happened during above call: This is a final release
-            # tag.
-            tag_avail[repo.git()]["already_released"] = True
-            tag_avail[repo.git()]["build_tag"] = state[repo.git()]["version"]
+            # No exception happened during above call: This is a final release tag.
+            tag_avail[repo_name]["already_released"] = True
+            tag_avail[repo_name]["build_tag"] = state[repo_name]["version"]
         except FileNotFoundError as err:
             print(err)
             missing_repos = True
         except subprocess.CalledProcessError:
             # Exception happened during Git call. This tag doesn't exist, and
             # we must look for and/or create build tags.
-            tag_avail[repo.git()]["already_released"] = False
+            tag_avail[repo_name]["already_released"] = False
             all_released = False
 
             # Find highest <version>-buildX tag, where X is a number.
-            tags = execute_git(state, repo.git(), ["tag"], capture=True)
+            tags = execute_git(state, repo_name, ["tag"], capture=True)
             highest = -1
             for tag in tags.split("\n"):
                 match = re.match(
-                    "^%s-build([0-9]+)$" % re.escape(state[repo.git()]["version"]), tag
+                    "^%s-build([0-9]+)$" % re.escape(state[repo_name]["version"]), tag
                 )
                 if match is not None and int(match.group(1)) > highest:
                     highest = int(match.group(1))
                     highest_tag = tag
             if highest >= 0:
                 # Assign highest tag so far.
-                tag_avail[repo.git()]["build_tag"] = highest_tag
+                tag_avail[repo_name]["build_tag"] = highest_tag
                 if highest > highest_overall:
                     highest_overall = highest
             # Else: Nothing. This repository doesn't have any build tags yet.
 
-        if tag_avail[repo.git()].get("build_tag") is not None:
+        if tag_avail[repo_name].get("build_tag") is not None:
             sha = execute_git(
                 state,
-                repo.git(),
-                ["rev-parse", "--short", tag_avail[repo.git()]["build_tag"] + "~0"],
+                repo_name,
+                ["rev-parse", "--short", tag_avail[repo_name]["build_tag"] + "~0"],
                 capture=True,
             )
-            tag_avail[repo.git()]["sha"] = sha
+            tag_avail[repo_name]["sha"] = sha
 
     if highest_overall > 0:
         tag_avail["image_tag"] = "mender-%s-build%d" % (
@@ -1296,8 +1300,7 @@ def repo_sort_key(repo):
 
 
 def report_release_state(state, tag_avail):
-    """Reports the current state of the release, including current build
-    tags."""
+    """Reports the current state of the release, including current build tags."""
 
     print("Mender release: %s" % state["version"])
     print("Next build image: ", end="")
@@ -1305,35 +1308,44 @@ def report_release_state(state, tag_avail):
         print(tag_avail["image_tag"])
     else:
         print("<Needs a new image tag>")
-    fmt_str = "%-27s %-10s %-16s %-20s"
-    print(fmt_str % ("REPOSITORY", "VERSION", "PICK NEXT BUILD", "BUILD TAG"))
-    print(fmt_str % ("", "", "TAG FROM", ""))
-    for repo in sorted(Component.get_components_of_type("git"), key=repo_sort_key,):
-        if tag_avail[repo.git()]["already_released"]:
-            tag = state[repo.git()]["version"]
-            # Report released tags as following themselves, even though behind
-            # the scenes we do keep track of a branch we follow. This is because
-            # released repositories don't receive build tags.
-            following = state[repo.git()]["version"]
+
+    # Get unique repositories from JSON
+    repos = get_repos_from_current_json(state)
+
+    fmt_str = "%-27s %-10s %-20s"
+    print(fmt_str % ("REPOSITORY", "VERSION", "BUILD TAG"))
+    print(fmt_str % ("", "", ""))
+
+    for repo_info in sorted(repos, key=lambda r: r['repo']):
+        repo_name = repo_info['repo']
+
+        if tag_avail[repo_name]["already_released"]:
+            tag = state[repo_name]["version"]
         else:
-            tag = tag_avail[repo.git()].get("build_tag")
+            tag = tag_avail[repo_name].get("build_tag")
             if tag is None:
                 tag = "<Needs a new build tag>"
             else:
-                tag = "%s (%s)" % (tag, tag_avail[repo.git()]["sha"])
-            following = state[repo.git()]["following"]
+                tag = "%s (%s)" % (tag, tag_avail[repo_name]["sha"])
 
-        print(fmt_str % (repo.git(), state[repo.git()]["version"], following, tag))
+        print(fmt_str % (repo_name, state[repo_name]["version"], tag))
 
 
-def annotation_version(repo, tag_avail):
-    """Generates the string used in Git tag annotations."""
+def annotation_version(repo_name, tag_avail):
+    """Generates the string used in Git tag annotations.
 
-    match = re.match("^(.*)-build([0-9]+)$", tag_avail[repo.git()]["build_tag"])
+    Args:
+        repo_name: Repository name string (e.g., 'mender', 'mender-connect')
+        tag_avail: Tag availability dict
+
+    Returns:
+        str: Annotation message for git tag
+    """
+    match = re.match("^(.*)-build([0-9]+)$", tag_avail[repo_name]["build_tag"])
     if match is None:
-        return "%s version %s." % (repo.git(), tag_avail[repo.git()]["build_tag"])
+        return "%s version %s." % (repo_name, tag_avail[repo_name]["build_tag"])
     else:
-        return "%s version %s Build %s." % (repo.git(), match.group(1), match.group(2))
+        return "%s version %s Build %s." % (repo_name, match.group(1), match.group(2))
 
 
 def version_components(version):
@@ -1452,26 +1464,26 @@ def generate_new_tags(state, tag_avail, final):
     interrupted anywhere, it makes no change, and returns the original tag_avail
     instead."""
 
-    output = execute_git(state, "integration", ["show", "-s"], capture=True)
-    if output.find(VERSION_BUMP_STRING) >= 0:
-        # Previous version bump detected. Roll back one commit.
-        execute_git(state, "integration", ["reset", "--hard", "HEAD~1"])
+    # Get unique repositories from JSON
+    repos = get_repos_from_current_json(state)
 
     # Find highest of all build tags in all repos.
     highest = 0
-    for repo in Component.get_components_of_type("git"):
+    for repo_info in repos:
+        repo_name = repo_info['repo']
         if (
-            not tag_avail[repo.git()]["already_released"]
-            and tag_avail[repo.git()].get("build_tag") is not None
+            not tag_avail[repo_name]["already_released"]
+            and tag_avail[repo_name].get("build_tag") is not None
         ):
-            match = re.match(".*-build([0-9]+)$", tag_avail[repo.git()]["build_tag"])
+            match = re.match(".*-build([0-9]+)$", tag_avail[repo_name]["build_tag"])
             if match is not None and int(match.group(1)) > highest:
                 highest = int(match.group(1))
 
     # Assign new build tags to each repo based on our previous findings.
     next_tag_avail = copy.deepcopy(tag_avail)
-    for repo in Component.get_components_of_type("git"):
-        if not tag_avail[repo.git()]["already_released"]:
+    for repo_info in repos:
+        repo_name = repo_info['repo']
+        if not tag_avail[repo_name]["already_released"]:
             if final:
                 # For final tag, point to the previous build tag, not the
                 # version we follow.
@@ -1479,43 +1491,48 @@ def generate_new_tags(state, tag_avail, final):
                 # point to the commit.
                 sha = execute_git(
                     state,
-                    repo.git(),
-                    ["rev-parse", "--short", tag_avail[repo.git()]["build_tag"] + "~0"],
+                    repo_name,
+                    ["rev-parse", "--short", tag_avail[repo_name]["build_tag"] + "~0"],
                     capture=True,
                 )
                 # For final tag, use actual version.
-                next_tag_avail[repo.git()]["build_tag"] = state[repo.git()]["version"]
+                next_tag_avail[repo_name]["build_tag"] = state[repo_name]["version"]
             else:
-                # For build tag, point the next tag to the last version of the
-                # branch we follow.
+                # For build tag, point the next tag to the version from JSON
+                # Determine the branch to follow (e.g., "origin/5.0.x" for version "5.0.3")
+                remote = find_upstream_remote(state, repo_name)
+                version = state[repo_name]["version"]
+                branch = re.sub(r"\.[^.]+$", ".x", version)
+                follow_branch = "%s/%s" % (remote, branch)
+
                 # "~0" is used to avoid a tag pointing to another tag. It should
                 # point to the commit.
                 sha = execute_git(
                     state,
-                    repo.git(),
-                    ["rev-parse", "--short", state[repo.git()]["following"] + "~0"],
+                    repo_name,
+                    ["rev-parse", "--short", follow_branch + "~0"],
                     capture=True,
                 )
                 # For non-final, use next build number.
-                next_tag_avail[repo.git()]["build_tag"] = "%s-build%d" % (
-                    state[repo.git()]["version"],
+                next_tag_avail[repo_name]["build_tag"] = "%s-build%d" % (
+                    state[repo_name]["version"],
                     highest + 1,
                 )
 
-            next_tag_avail[repo.git()]["sha"] = sha
+            next_tag_avail[repo_name]["sha"] = sha
 
             print_line()
-            if tag_avail[repo.git()].get("build_tag") is None:
+            if tag_avail[repo_name].get("build_tag") is None:
                 # If there is no existing tag, just display latest commit.
-                print("The latest commit in %s will be:" % repo.git())
-                execute_git(state, repo.git(), ["log", "-n1", sha])
+                print("The latest commit in %s will be:" % repo_name)
+                execute_git(state, repo_name, ["log", "-n1", sha])
             else:
                 # If there is an existing tag, display range.
-                print("The new commits in %s will be:" % repo.git())
+                print("The new commits in %s will be:" % repo_name)
                 execute_git(
                     state,
-                    repo.git(),
-                    ["log", "%s..%s" % (tag_avail[repo.git()]["build_tag"], sha)],
+                    repo_name,
+                    ["log", "%s..%s" % (tag_avail[repo_name]["build_tag"], sha)],
                 )
             print()
 
@@ -1540,117 +1557,182 @@ def generate_new_tags(state, tag_avail, final):
 
 
 def tag_and_push(state, tag_avail, next_tag_avail, final):
-    """If interrupted anywhere, it makes no change, and returns the original tag_avail"""
+    """Creates tags and pushes them. For build tags, creates a leaf commit in
+    subcomponents repo. For final tags, pushes the branch too.
 
-    # Create temporary directory to make changes in.
+    Args:
+        state: Release state dict
+        tag_avail: Current tag availability
+        next_tag_avail: Next tag availability (what we're creating)
+        final: Boolean - True for final tag, False for build tag
+
+    Returns:
+        Updated next_tag_avail on success, original tag_avail on failure
+    """
+
+    # Get unique repositories from JSON
+    repos = get_repos_from_current_json(state)
+
+    # Determine JSON filename based on tag type
+    if final:
+        json_filename = "%s.json" % state["version"]
+    else:
+        # Extract build number from image_tag
+        match = re.match(".*-build([0-9]+)$", next_tag_avail["image_tag"])
+        if match:
+            build_num = match.group(1)
+            json_filename = "%s-build%s.json" % (state["version"], build_num)
+        else:
+            print("Error: Could not determine build number")
+            return tag_avail
+
+    # Get current branch (e.g., "5.0.x" for version "5.0.3")
+    version = state["version"]
+    if re.match(r'^\d+\.\d+\.\d+', version):
+        # Version like "5.0.3" -> branch "5.0.x"
+        parts = version.split('.')
+        current_branch = "%s.%s.x" % (parts[0], parts[1])
+    else:
+        # For versions like "next" or "master"
+        current_branch = "master"
+
+    # Create temporary checkout of mender-client-subcomponents
     tmpdir = setup_temp_git_checkout(
-        state, "integration", state["integration"]["following"]
+        state, "mender-client-subcomponents", current_branch
     )
+
     try:
-        prev_version = find_prev_version(
-            sorted_final_version_list(tmpdir),
-            next_tag_avail["integration"]["build_tag"],
-        )
+        # Read current JSON to use as template
+        current_json_path = get_current_release_json_path(state)
+        current_json = read_release_json(current_json_path)
 
-        changelogs = []
+        # Create new JSON with updated versions from next_tag_avail
+        new_json = {
+            "version": json_filename.replace('.json', ''),  # Remove .json extension
+            "components": []
+        }
 
-        # Modify docker tags in docker-compose file.
-        for repo in sorted(Component.get_components_of_type("git"), key=repo_sort_key,):
+        # Build component list with updated versions
+        for component in current_json['components']:
+            comp_name = component['name']
+            comp_source = component['source']
+            # Find the repo for this component
+            repo_name = extract_repo_name_from_source(comp_source)
+            # Use the build_tag from next_tag_avail for this repo
+            new_version = next_tag_avail[repo_name]["build_tag"]
 
-            # Set git version.
-            set_component_version_to(
-                tmpdir, repo, next_tag_avail[repo.git()]["build_tag"]
-            )
+            new_json['components'].append({
+                'name': comp_name,
+                'version': new_version,
+                'source': comp_source
+            })
 
-            if prev_version:
-                try:
-                    prev_repo_version = version_of(
-                        os.path.join(state["repo_dir"], "integration"),
-                        repo,
-                        in_integration_version=prev_version,
-                    )
-                except KeyError:
-                    # Means that this repo didn't exist in earlier integration
-                    # versions.
-                    prev_repo_version = None
-            else:
-                prev_repo_version = None
-            if prev_repo_version:
-                if prev_repo_version != next_tag_avail[repo.git()]["build_tag"]:
-                    changelogs.append(
-                        "Changelog: Upgrade %s to %s."
-                        % (repo.git(), next_tag_avail[repo.git()]["build_tag"])
-                    )
-            else:
-                changelogs.append(
-                    "Changelog: Add %s %s."
-                    % (repo.git(), next_tag_avail[repo.git()]["build_tag"])
-                )
-        if len(changelogs) == 0:
-            changelogs.append("Changelog: None")
+        # Write new JSON file
+        json_path = os.path.join(tmpdir, "subcomponents", "releases", json_filename)
+        write_release_json(json_path, new_json)
 
+        # Show what we're committing
         print_line()
         print("Changes to commit:")
         print()
         execute_git(state, tmpdir, ["diff"])
-        git_list = []
-        git_list.append(
+        print()
+        print("New JSON file: %s" % json_filename)
+        print()
+
+        # Commit the JSON file
+        commit_message = "Release %s\n\nUpdated component versions for %s" % (
+            json_filename.replace('.json', ''),
+            "final release" if final else "build tag"
+        )
+
+        git_list = [
             (
                 state,
                 tmpdir,
-                [
-                    "commit",
-                    "-a",
-                    "-s",
-                    "-m",
-                    "%s %s.\n\n%s"
-                    % (
-                        VERSION_BUMP_STRING,
-                        next_tag_avail["integration"]["build_tag"],
-                        "\n".join(changelogs),
-                    ),
-                ],
+                ["add", os.path.join("subcomponents", "releases", json_filename)],
+            ),
+            (
+                state,
+                tmpdir,
+                ["commit", "-s", "-m", commit_message],
             )
-        )
+        ]
+
         if not query_execute_git_list(git_list):
             return tag_avail
 
-        # Because of the commit above, integration repository now has a new SHA.
+        # Get the SHA of the commit we just made
         sha = execute_git(
             state, tmpdir, ["rev-parse", "--short", "HEAD~0"], capture=True
         )
-        next_tag_avail["integration"]["sha"] = sha
-        # Fetch the SHA from the tmpdir to make the object available in the
-        # original repository.
-        execute_git(state, "integration", ["fetch", tmpdir, "HEAD"], capture=True)
+
+        # Fetch the commit from tmpdir to make it available in real repo
+        # This creates a "dangling" commit that's not on any branch
+        execute_git(state, "mender-client-subcomponents", ["fetch", tmpdir, "HEAD"], capture=True)
+
+        # Tag the subcomponents commit
+        subcomponents_tag = json_filename.replace('.json', '')
+        execute_git(
+            state,
+            "mender-client-subcomponents",
+            ["tag", "-a", "-m", "Release %s" % subcomponents_tag, subcomponents_tag, sha]
+        )
+
+        print()
+        print("Created tag %s in mender-client-subcomponents at %s" % (subcomponents_tag, sha))
+
+        # Push behavior depends on final vs build
+        if final:
+            # For final: push both the branch and the tag
+            print("Pushing branch and tag to mender-client-subcomponents...")
+            remote = find_upstream_remote(state, "mender-client-subcomponents")
+            # First, merge the commit into the actual branch
+            execute_git(state, "mender-client-subcomponents", ["merge", "--ff-only", sha])
+            # Then push branch and tag
+            execute_git(state, "mender-client-subcomponents", ["push", remote, current_branch])
+            execute_git(state, "mender-client-subcomponents", ["push", remote, subcomponents_tag])
+        else:
+            # For build: only push the tag (leaf commit - not on branch)
+            print("Pushing tag only (leaf commit) to mender-client-subcomponents...")
+            remote = find_upstream_remote(state, "mender-client-subcomponents")
+            execute_git(state, "mender-client-subcomponents", ["push", remote, subcomponents_tag])
+
     finally:
         cleanup_temp_git_checkout(tmpdir)
 
-    # Prepare Git tag and push commands.
+    # Now tag and push all component repositories
+    print_line()
+    print("Tagging component repositories...")
+
     git_tag_list = []
     git_push_list = []
-    for repo in Component.get_components_of_type("git"):
-        if not next_tag_avail[repo.git()]["already_released"]:
+
+    for repo_info in repos:
+        repo_name = repo_info['repo']
+        if not next_tag_avail[repo_name]["already_released"]:
+            # Create annotated tag
             git_tag_list.append(
                 (
                     state,
-                    repo.git(),
+                    repo_name,
                     [
                         "tag",
                         "-a",
                         "-m",
-                        annotation_version(repo, next_tag_avail),
-                        next_tag_avail[repo.git()]["build_tag"],
-                        next_tag_avail[repo.git()]["sha"],
+                        annotation_version(repo_name, next_tag_avail),
+                        next_tag_avail[repo_name]["build_tag"],
+                        next_tag_avail[repo_name]["sha"],
                     ],
                 )
             )
-            remote = find_upstream_remote(state, repo.git())
+            # Push tag
+            remote = find_upstream_remote(state, repo_name)
             git_push_list.append(
                 (
                     state,
-                    repo.git(),
-                    ["push", remote, next_tag_avail[repo.git()]["build_tag"]],
+                    repo_name,
+                    ["push", remote, next_tag_avail[repo_name]["build_tag"]],
                 )
             )
 
@@ -1658,9 +1740,18 @@ def tag_and_push(state, tag_avail, next_tag_avail, final):
         return tag_avail
 
     # If this was the final tag, reflect that in our data.
-    for repo in Component.get_components_of_type("git"):
-        if not next_tag_avail[repo.git()]["already_released"] and final:
-            next_tag_avail[repo.git()]["already_released"] = True
+    for repo_info in repos:
+        repo_name = repo_info['repo']
+        if not next_tag_avail[repo_name]["already_released"] and final:
+            next_tag_avail[repo_name]["already_released"] = True
+
+    print()
+    print_line()
+    print("✓ Successfully created and pushed tags")
+    if final:
+        print("  Final release: %s" % json_filename.replace('.json', ''))
+    else:
+        print("  Build tag: %s (leaf commit)" % json_filename.replace('.json', ''))
 
     return next_tag_avail
 
