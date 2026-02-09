@@ -1190,15 +1190,29 @@ def refresh_repos(state):
 
     git_list = []
 
-    for repo in Component.get_components_of_type("git"):
-        remote = find_upstream_remote(state, repo.git())
+    # Get unique repositories from JSON
+    repos = get_repos_from_current_json(state)
+
+    for repo_info in repos:
+        repo_name = repo_info['repo']
+        remote = find_upstream_remote(state, repo_name)
         git_list.append(
             (
                 state,
-                repo.git(),
+                repo_name,
                 ["fetch", "--tags", remote, "+refs/heads/*:refs/remotes/%s/*" % remote],
             )
         )
+
+    # Also fetch mender-client-subcomponents
+    subcomp_remote = find_upstream_remote(state, "mender-client-subcomponents")
+    git_list.append(
+        (
+            state,
+            "mender-client-subcomponents",
+            ["fetch", "--tags", subcomp_remote, "+refs/heads/*:refs/remotes/%s/*" % subcomp_remote],
+        )
+    )
 
     query_execute_git_list(git_list)
 
@@ -2042,30 +2056,35 @@ def purge_build_tags(state, tag_avail):
 
     print("Checking which remote tags need to be purged...")
     git_list = []
-    for repo in Component.get_components_of_type("git"):
-        remote = find_upstream_remote(state, repo.git())
+
+    # Get unique repositories from JSON
+    repos = get_repos_from_current_json(state)
+
+    for repo_info in repos:
+        repo_name = repo_info['repo']
+        remote = find_upstream_remote(state, repo_name)
         remote_tag_list = [
             re.match(r".*refs/tags/(.*)", line).group(1)
             for line in execute_git(
-                state, repo.git(), ["ls-remote", "--tags", remote], capture=True,
+                state, repo_name, ["ls-remote", "--tags", remote], capture=True,
             ).split("\n")
             if line
         ]
         to_purge = []
         for tag in remote_tag_list:
             if re.match(
-                "^%s-build[0-9]+$" % re.escape(state[repo.git()]["version"]), tag
+                "^%s-build[0-9]+$" % re.escape(state[repo_name]["version"]), tag
             ):
                 to_purge.append(tag)
         if len(to_purge) > 0:
             git_list.append(
                 (
                     state,
-                    repo.git(),
+                    repo_name,
                     ["push", remote] + [":%s" % tag for tag in to_purge],
                 )
             )
-            git_list.append((state, repo.git(), ["tag", "-d"] + to_purge))
+            git_list.append((state, repo_name, ["tag", "-d"] + to_purge))
 
     query_execute_git_list(git_list)
 
@@ -2246,17 +2265,34 @@ def create_release_branches(state, tag_avail):
 
     any_repo_needs_branch = False
 
-    for repo in Component.get_components_of_type("git"):
-        if tag_avail[repo.git()]["already_released"]:
+    # Get unique repositories from JSON
+    repos = get_repos_from_current_json(state)
+
+    for repo_info in repos:
+        repo_name = repo_info['repo']
+
+        if tag_avail[repo_name]["already_released"]:
             continue
 
-        remote = find_upstream_remote(state, repo.git())
+        remote = find_upstream_remote(state, repo_name)
+
+        # Derive the branch we should follow from the version
+        # E.g., version "5.0.3" -> branch "origin/5.0.x"
+        version = state[repo_name]["version"]
+        if re.match(r'^\d+\.\d+\.\d+', version):
+            parts = version.split('.')
+            branch_name = "%s.%s.x" % (parts[0], parts[1])
+        else:
+            # For non-standard versions, skip branch creation
+            continue
+
+        following_branch = "%s/%s" % (remote, branch_name)
 
         try:
             execute_git(
                 state,
-                repo.git(),
-                ["rev-parse", state[repo.git()]["following"]],
+                repo_name,
+                ["rev-parse", following_branch],
                 capture=True,
                 capture_stderr=True,
             )
@@ -2269,7 +2305,7 @@ def create_release_branches(state, tag_avail):
                     + "and base it on latest '%s/master' (if you don't want to base "
                     + "it on '%s/master' you have to do it manually)? "
                 )
-                % (repo.git(), state[repo.git()]["following"], remote, remote)
+                % (repo_name, following_branch, remote, remote)
             )
             if not reply.startswith("Y") and not reply.startswith("y"):
                 continue
@@ -2278,13 +2314,11 @@ def create_release_branches(state, tag_avail):
             cmd_list.append(
                 (
                     state,
-                    repo.git(),
+                    repo_name,
                     [
                         "push",
                         remote,
-                        "%s/master:refs/heads/%s"
-                        # Slight abuse of basename() to get branch basename.
-                        % (remote, os.path.basename(state[repo.git()]["following"])),
+                        "%s/master:refs/heads/%s" % (remote, branch_name),
                     ],
                 )
             )
@@ -2310,6 +2344,102 @@ def do_beta_to_final_transition(state):
     version = state["version"]
     version = re.sub("b[0-9]+$", "", version)
     update_state(state, ["version"], version)
+
+
+def commit_current_json_state(state, tag_avail):
+    """Commits the current state to a JSON file in mender-client-subcomponents.
+
+    This is useful for updating the JSON file on a branch to reflect current
+    component versions without creating tags.
+
+    Args:
+        state: Release state dict
+        tag_avail: Current tag availability
+    """
+    # Get current branch (e.g., "5.0.x" for version "5.0.3")
+    version = state["version"]
+    if re.match(r'^\d+\.\d+\.\d+', version):
+        parts = version.split('.')
+        current_branch = "%s.%s.x" % (parts[0], parts[1])
+        json_filename = "%s.%s.x.json" % (parts[0], parts[1])
+    else:
+        # For versions like "next"
+        current_branch = "master"
+        json_filename = "next.json"
+
+    print()
+    print("Will commit to branch: %s" % current_branch)
+    print("JSON file: %s" % json_filename)
+    print()
+
+    # Get unique repositories
+    repos = get_repos_from_current_json(state)
+
+    # Create JSON with current state
+    new_json = {
+        "version": json_filename.replace('.json', ''),
+        "components": []
+    }
+
+    # Read current JSON to preserve component order and source URLs
+    current_json_path = get_current_release_json_path(state)
+    current_json = read_release_json(current_json_path)
+
+    # Build component list with versions from state
+    for component in current_json['components']:
+        comp_name = component['name']
+        comp_source = component['source']
+        repo_name = extract_repo_name_from_source(comp_source)
+
+        # Use version from state
+        new_version = state[repo_name]["version"]
+
+        new_json['components'].append({
+            'name': comp_name,
+            'version': new_version,
+            'source': comp_source
+        })
+
+    # Create temp checkout
+    tmpdir = setup_temp_git_checkout(
+        state, "mender-client-subcomponents", current_branch
+    )
+
+    try:
+        # Write JSON file
+        json_path = os.path.join(tmpdir, "subcomponents", "releases", json_filename)
+        write_release_json(json_path, new_json)
+
+        # Show diff
+        print("Changes:")
+        execute_git(state, tmpdir, ["diff"])
+        print()
+
+        reply = ask("Commit and push these changes? (Y/n) ")
+        if reply.lower().startswith("n"):
+            print("Aborted.")
+            return
+
+        # Commit
+        commit_message = "Update %s with current component versions" % json_filename
+        git_list = [
+            (state, tmpdir, ["add", os.path.join("subcomponents", "releases", json_filename)]),
+            (state, tmpdir, ["commit", "-s", "-m", commit_message]),
+        ]
+
+        if not query_execute_git_list(git_list):
+            print("Commit failed.")
+            return
+
+        # Push
+        remote = find_upstream_remote(state, "mender-client-subcomponents")
+        execute_git(state, tmpdir, ["push", remote, current_branch])
+
+        print()
+        print("✓ Successfully committed and pushed %s" % json_filename)
+
+    finally:
+        cleanup_temp_git_checkout(tmpdir)
 
 
 def do_git_version_branches_from_follows(state):
@@ -2717,35 +2847,18 @@ def do_release(release_state_file, args):
 
         print("What do you want to do?")
         print("-- Main operations")
-        if (
-            re.search("b[0-9]+$", state["version"])
-            and tag_avail["integration"]["already_released"]
-        ):
-            print("  O) Move from beta build tags to final build tags")
         print("  R) Refresh all repositories from upstream (git fetch)")
         print("  T) Generate and push new build tags")
-        print("  B) Trigger new integration build using current tags")
         print("  F) Tag and push final tag, based on current build tag")
-        print(
-            '  D) Update ":%s" and/or ":latest" Docker tags to current release'
-            % minor_version
-        )
         print("  Q) Quit (your state is saved in %s)" % RELEASE_TOOL_STATE)
         print()
         print("-- Less common operations")
         print("  P) Push current build tags (not necessary unless -s was used before)")
         print("  U) Purge build tags from all repositories")
-        print('  M) Merge "integration" release tag into release branch')
         print(
             "  C) Create new series branch (A.B.x style) for each repository that lacks one"
         )
-        print(
-            "  I) Put currently followed branch names into integration's git-versions "
-        )
-        print(
-            "     files. Use this to update the integration repository to new branch names"
-        )
-        print("     after you've branched it.")
+        print("  I) Commit current state to JSON file in mender-client-subcomponents")
 
         reply = ask("Choice? ")
 
@@ -2763,44 +2876,33 @@ def do_release(release_state_file, args):
             reply = ask("Purge all build tags from all repositories (recommended)? ")
             if reply.startswith("Y") or reply.startswith("y"):
                 purge_build_tags(state, tag_avail)
-            reply = ask(
-                'Merge "integration" release tag into version branch (recommended)? '
-            )
-            if reply.startswith("Y") or reply.startswith("y"):
-                merge_release_tag(
-                    state,
-                    tag_avail,
-                    Component.get_component_of_type("git", "integration"),
-                )
-        elif reply.lower() == "d":
-            push_latest_docker_tags(state, tag_avail, args)
         elif reply.lower() == "p":
+            # Push current build tags
             git_list = []
-            for repo in Component.get_components_of_type("git"):
-                remote = find_upstream_remote(state, repo.git())
-                git_list.append(
-                    (
-                        state,
-                        repo.git(),
-                        ["push", remote, tag_avail[repo.git()]["build_tag"]],
+            repos = get_repos_from_current_json(state)
+            for repo_info in repos:
+                repo_name = repo_info['repo']
+                if tag_avail[repo_name].get("build_tag"):
+                    remote = find_upstream_remote(state, repo_name)
+                    git_list.append(
+                        (
+                            state,
+                            repo_name,
+                            ["push", remote, tag_avail[repo_name]["build_tag"]],
+                        )
                     )
-                )
             query_execute_git_list(git_list)
-        elif reply.lower() == "b":
-            trigger_build(state, tag_avail)
         elif reply.lower() == "u":
             purge_build_tags(state, tag_avail)
-        elif reply.lower() == "m":
-            merge_release_tag(
-                state, tag_avail, Component.get_component_of_type("git", "integration")
-            )
         elif reply.lower() == "c":
             create_release_branches(state, tag_avail)
-        elif reply.lower() == "o":
-            do_beta_to_final_transition(state)
-            tag_avail = check_tag_availability(state)
         elif reply.lower() == "i":
-            do_git_version_branches_from_follows(state)
+            # Commit current JSON state
+            print("Committing current state to JSON...")
+            print("Note: This will create/update a JSON file with current component versions.")
+            reply = ask("Continue? (Y/n) ")
+            if not reply.lower().startswith("n"):
+                commit_current_json_state(state, tag_avail)
         else:
             print("Invalid choice!")
 
