@@ -1402,10 +1402,18 @@ def find_prev_version(tag_list, version):
 
 
 def find_patch_version(
-    state, repo, prev_version, next_unreleased=False, last_released=False
+    state, repo_name, prev_version, next_unreleased=False, last_released=False
 ):
     """Returns a patch version in a series, either the next unreleased one, or the
-    last (most recent) released one."""
+    last (most recent) released one.
+
+    Args:
+        state: Release state dict
+        repo_name: Repository name string (e.g., 'mender', 'mender-connect')
+        prev_version: Previous version to base calculation on
+        next_unreleased: If True, return next unreleased patch version
+        last_released: If True, return last released patch version
+    """
 
     if (next_unreleased and last_released) or not (next_unreleased or last_released):
         raise Exception(
@@ -1423,7 +1431,7 @@ def find_patch_version(
         try:
             execute_git(
                 state,
-                repo.git(),
+                repo_name,
                 ["rev-parse", new_version],
                 capture=True,
                 capture_stderr=True,
@@ -2355,9 +2363,20 @@ def do_build(args):
     trigger_build(state, tag_avail)
 
 
-def determine_version_bump(state, repo, from_v, to_v):
+def determine_version_bump(state, repo_name, from_v, to_v):
+    """Determine version bump based on conventional commits.
+
+    Args:
+        state: Release state dict
+        repo_name: Repository name string (e.g., 'mender', 'mender-connect')
+        from_v: Starting version/ref
+        to_v: Ending version/ref
+
+    Returns:
+        str: New version number based on commit types
+    """
     revlist = execute_git(
-        state, repo.git(), ["rev-list", "%s..%s" % (from_v, to_v)], capture=True
+        state, repo_name, ["rev-list", "%s..%s" % (from_v, to_v)], capture=True
     ).split("\n")
 
     (major, minor, patch, _) = version_components(from_v)
@@ -2365,7 +2384,7 @@ def determine_version_bump(state, repo, from_v, to_v):
 
     for sha in revlist:
         commit_message = execute_git(
-            state, repo.git(), ["log", "--format=%B", "-1", sha], capture=True
+            state, repo_name, ["log", "--format=%B", "-1", sha], capture=True
         )
         m = re.search(r"^BREAKING CHANGE:.+", commit_message, re.MULTILINE)
         if m:
@@ -2389,17 +2408,35 @@ def determine_version_bump(state, repo, from_v, to_v):
         return None
 
 
-def determine_version_to_include_in_release(state, repo):
+def determine_version_to_include_in_release(state, repo_info):
     """Returns True if the user decided on the component, False if the user
-    skips the decision for later"""
+    skips the decision for later.
 
-    version = state_value(state, [repo.git(), "version"])
+    Args:
+        state: Release state dict
+        repo_info: Repository info dict from get_repos_from_current_json()
+                   with keys: 'repo', 'source', 'components', 'version'
+    """
+    # Extract repo name for easier access
+    repo_name = repo_info['repo']
+
+    version = state_value(state, [repo_name, "version"])
 
     if version is not None:
         return True
 
-    # Is there already a version in the same series? Look at integration.
-    tag_list = sorted_final_version_list(integration_dir())
+    # Show changelog PR link once per session
+    if not state_value(state, ["_changelog_link_shown"]):
+        print()
+        print("=" * 70)
+        print("Changelog PRs:")
+        print("https://github.com/mendersoftware/mender-client-subcomponents/pulls?q=is%3Apr+is%3Aopen+label%3A%22autorelease%3A+pending%22")
+        print("=" * 70)
+        print()
+        update_state(state, ["_changelog_link_shown"], True)
+
+    # Is there already a version in the same series? Look at subcomponents repo.
+    tag_list = sorted_final_version_list(subcomponents_dir())
     prev_of_integration = find_prev_version(tag_list, state["version"])
     (overall_major, overall_minor, _, overall_beta) = version_components(
         state["version"]
@@ -2411,31 +2448,34 @@ def determine_version_to_include_in_release(state, repo):
     new_repo_version = None
     follow_branch = None
     if overall_major == prev_major and overall_minor == prev_minor:
-        # Same series. Us it as basis.
+        # Same series. Use it as basis.
         prev_of_repo = version_of(
-            integration_dir(), repo, in_integration_version=prev_of_integration,
+            subcomponents_dir(), repo_name, in_release_version=prev_of_integration,
         )
         if overall_beta is not None:
             (major, minor, patch, _) = version_components(prev_of_repo)
             new_repo_version = "%d.%d.%db%d" % (major, minor, patch, overall_beta)
         else:
             new_repo_version = find_patch_version(
-                state, repo, prev_of_repo, next_unreleased=True
+                state, repo_name, prev_of_repo, next_unreleased=True
             )
             prev_of_repo_independent = find_patch_version(
-                state, repo, prev_of_repo, last_released=True
+                state, repo_name, prev_of_repo, last_released=True
             )
-        follow_branch = find_default_following_branch(state, repo, new_repo_version)
+        # Derive follow branch from new version (e.g., "5.0.3" -> "origin/5.0.x")
+        remote = find_upstream_remote(state, repo_name)
+        branch = re.sub(r"\.[^.]+$", ".x", new_repo_version)
+        follow_branch = "%s/%s" % (remote, branch)
     else:
         # No series exists. Base on master.
         version_list = sorted_final_version_list(
-            os.path.join(state["repo_dir"], repo.git())
+            os.path.join(state["repo_dir"], repo_name)
         )
-        follow_branch = "%s/master" % find_upstream_remote(state, repo.git())
+        follow_branch = "%s/master" % find_upstream_remote(state, repo_name)
         if len(version_list) > 0:
             prev_of_repo = version_list[0]
             new_repo_version = determine_version_bump(
-                state, repo, prev_of_repo, follow_branch
+                state, repo_name, prev_of_repo, follow_branch
             )
         else:
             # No previous version at all. Start at 1.0.0.
@@ -2448,25 +2488,23 @@ def determine_version_to_include_in_release(state, repo):
     if prev_of_repo:
         print_line()
 
-        git_cmd = ["log", "%s..%s" % (prev_of_repo, follow_branch)]
-        print("cd %s && git %s:" % (repo.git(), " ".join(git_cmd)))
-        execute_git(state, repo.git(), git_cmd)
+        git_cmd = ["log", "--oneline", "%s..%s" % (prev_of_repo, follow_branch)]
+        print("cd %s && git %s:" % (repo_name, " ".join(git_cmd)))
+        execute_git(state, repo_name, git_cmd)
 
         print()
         print()
-
-        # TODO: link to GitHub PR for changelogs
 
         print_line()
         print(
             "Above is the output of:\n\ncd %s\ngit %s\n"
-            % (repo.git(), " ".join(git_cmd))
+            % (repo_name, " ".join(git_cmd))
         )
 
         if prev_of_repo_independent and prev_of_repo_independent != prev_of_repo:
             print(
                 """WARNING: %s is not the latest patch release, the latest patch release
-is %s, which does not occur in any integration version. You might want to
+is %s, which does not occur in any subcomponents version. You might want to
 double check this.
 """
                 % (prev_of_repo, prev_of_repo_independent)
@@ -2474,11 +2512,11 @@ double check this.
 
         reply = ask(
             "Based on this, is there a reason for a new release of %s? (Yes/No/Skip) "
-            % repo.git()
+            % repo_name
         )
 
         if reply.lower().startswith("s"):
-            print("Ok. Postponing decision on %s for later" % repo.git())
+            print("Ok. Postponing decision on %s for later" % repo_name)
             print()
             print_line()
             return False
@@ -2486,21 +2524,21 @@ double check this.
     if not prev_of_repo or reply.lower().startswith("y") and new_repo_version:
         reply = ask(
             "Should the new release of %s be version %s? "
-            % (repo.git(), new_repo_version)
+            % (repo_name, new_repo_version)
         )
         if reply.lower().startswith("y"):
-            update_state(state, [repo.git(), "version"], new_repo_version)
+            update_state(state, [repo_name, "version"], new_repo_version)
     else:
         reply = ask(
             "Should the release of %s be left at the previous version %s? "
-            % (repo.git(), prev_of_repo)
+            % (repo_name, prev_of_repo)
         )
         if reply.lower().startswith("y"):
-            update_state(state, [repo.git(), "version"], prev_of_repo)
+            update_state(state, [repo_name, "version"], prev_of_repo)
 
-    if state_value(state, [repo.git(), "version"]) is None:
-        reply = ask("Ok. Please input the new version of %s manually: " % repo.git())
-        update_state(state, [repo.git(), "version"], reply)
+    if state_value(state, [repo_name, "version"]) is None:
+        reply = ask("Ok. Please input the new version of %s manually: " % repo_name)
+        update_state(state, [repo_name, "version"], reply)
 
     print()
     print_line()
@@ -2550,27 +2588,25 @@ def do_release(release_state_file, args):
     if state_value(state, ["version"]) is None:
         update_state(state, ["version"], ask("Which release of Mender will this be? "))
 
-    update_state(state, ["integration", "version"], state["version"])
-
     input = ask(
         "Do you want to fetch all the latest tags and branches in all repositories (will not change checked-out branch)? "
     )
     if input.startswith("Y") or input.startswith("y"):
         refresh_repos(state)
 
-    repos = sorted(Component.get_components_of_type("git"), key=repo_sort_key,)
-    while len(repos) > 0:
-        repo = repos.pop(0)
-        if not determine_version_to_include_in_release(state, repo):
-            repos.append(repo)
+    # Get unique repositories from JSON (source-based deduplication)
+    repos = get_repos_from_current_json(state)
+    repos = sorted(repos, key=lambda r: r['repo'])
+
+    # Version determination loop
+    pending_repos = list(repos)
+    while len(pending_repos) > 0:
+        repo_info = pending_repos.pop(0)
+        if not determine_version_to_include_in_release(state, repo_info):
+            pending_repos.append(repo_info)
 
     # Fill data about available tags.
     tag_avail = check_tag_availability(state)
-
-    for repo in Component.get_components_of_type("git"):
-        if state_value(state, [repo.git(), "following"]) is None:
-            # Follow "1.0.x" style branches by default.
-            assign_default_following_branch(state, repo)
 
     create_release_branches(state, tag_avail)
 
