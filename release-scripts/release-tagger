@@ -2324,13 +2324,7 @@ def create_release_branches(state, tag_avail):
             )
             query_execute_git_list(cmd_list)
 
-    if any_repo_needs_branch:
-        reply = ask(
-            "Do you want to update all git-versions files to new branch values in integration? "
-        )
-        if reply.upper().startswith("Y"):
-            do_git_version_branches_from_follows(state)
-    else:
+    if not any_repo_needs_branch:
         # Matches the beginning text above.
         print("No.")
 
@@ -2662,13 +2656,19 @@ def determine_version_to_include_in_release(state, repo_info):
     (overall_major, overall_minor, _, overall_beta) = version_components(
         state["version"]
     )
-    (prev_major, prev_minor, _, _) = version_components(prev_of_integration)
+
+    # Handle case where there's no previous version
+    if prev_of_integration:
+        (prev_major, prev_minor, _, _) = version_components(prev_of_integration)
+    else:
+        # No previous version - won't match any series
+        prev_major = prev_minor = -1
 
     prev_of_repo = None
     prev_of_repo_independent = None
     new_repo_version = None
     follow_branch = None
-    if overall_major == prev_major and overall_minor == prev_minor:
+    if prev_of_integration and overall_major == prev_major and overall_minor == prev_minor:
         # Same series. Use it as basis.
         prev_of_repo = version_of(
             subcomponents_dir(), repo_name, in_release_version=prev_of_integration,
