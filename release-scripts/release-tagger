@@ -2327,6 +2327,47 @@ def create_release_branches(state, tag_avail):
             )
             query_execute_git_list(cmd_list)
 
+    # Also check if mender-client-subcomponents needs a release branch
+    version = state["version"]
+    if re.match(r'^\d+\.\d+\.\d+', version):
+        parts = version.split('.')
+        branch_name = "%s.%s.x" % (parts[0], parts[1])
+        subcomp_remote = find_upstream_remote(state, "mender-client-subcomponents")
+        following_branch = "%s/%s" % (subcomp_remote, branch_name)
+
+        try:
+            execute_git(
+                state,
+                "mender-client-subcomponents",
+                ["rev-parse", following_branch],
+                capture=True,
+                capture_stderr=True,
+            )
+        except subprocess.CalledProcessError:
+            any_repo_needs_branch = True
+            print_line()
+            reply = ask(
+                (
+                    "mender-client-subcomponents does not have a branch '%s'. "
+                    + "Would you like to create it from '%s/main'? "
+                )
+                % (following_branch, subcomp_remote)
+            )
+            if reply.startswith("Y") or reply.startswith("y"):
+                cmd_list = []
+                cmd_list.append(
+                    (
+                        state,
+                        "mender-client-subcomponents",
+                        [
+                            "push",
+                            subcomp_remote,
+                            "%s/main:refs/heads/%s" % (subcomp_remote, branch_name),
+                        ],
+                    )
+                )
+                query_execute_git_list(cmd_list)
+
     if not any_repo_needs_branch:
         # Matches the beginning text above.
         print("No.")
