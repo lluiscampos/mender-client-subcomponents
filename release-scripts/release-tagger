@@ -2276,6 +2276,9 @@ def create_release_branches(state, tag_avail):
 
         remote = find_upstream_remote(state, repo_name)
 
+        # Get base branch from JSON (e.g., "master" or "main")
+        base_branch = repo_info['version']
+
         # Derive the branch we should follow from the version
         # E.g., version "5.0.3" -> branch "origin/5.0.x"
         version = state[repo_name]["version"]
@@ -2302,10 +2305,10 @@ def create_release_branches(state, tag_avail):
             reply = ask(
                 (
                     "%s does not have a branch '%s'. Would you like to create it, "
-                    + "and base it on latest '%s/master' (if you don't want to base "
-                    + "it on '%s/master' you have to do it manually)? "
+                    + "and base it on latest '%s/%s' (if you don't want to base "
+                    + "it on '%s/%s' you have to do it manually)? "
                 )
-                % (repo_name, following_branch, remote, remote)
+                % (repo_name, following_branch, remote, base_branch, remote, base_branch)
             )
             if not reply.startswith("Y") and not reply.startswith("y"):
                 continue
@@ -2318,7 +2321,7 @@ def create_release_branches(state, tag_avail):
                     [
                         "push",
                         remote,
-                        "%s/master:refs/heads/%s" % (remote, branch_name),
+                        "%s/%s:refs/heads/%s" % (remote, base_branch, branch_name),
                     ],
                 )
             )
