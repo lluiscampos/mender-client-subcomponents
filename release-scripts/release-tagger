@@ -1601,14 +1601,19 @@ def tag_and_push(state, tag_avail, next_tag_avail, final):
             return tag_avail
 
     # Get current branch (e.g., "5.0.x" for version "5.0.3")
+    # Need full remote reference (e.g., "mender/6.0.x") for setup_temp_git_checkout
     version = state["version"]
+    subcomp_remote = find_upstream_remote(state, "mender-client-subcomponents")
+
     if re.match(r'^\d+\.\d+\.\d+', version):
         # Version like "5.0.3" -> branch "5.0.x"
         parts = version.split('.')
-        current_branch = "%s.%s.x" % (parts[0], parts[1])
+        branch_name = "%s.%s.x" % (parts[0], parts[1])
+        current_branch = "%s/%s" % (subcomp_remote, branch_name)
     else:
-        # For versions like "next" or "master"
-        current_branch = "master"
+        # For versions like "next", use main branch
+        branch_name = "main"
+        current_branch = "%s/main" % subcomp_remote
 
     # Create temporary checkout of mender-client-subcomponents
     tmpdir = setup_temp_git_checkout(
@@ -1700,17 +1705,15 @@ def tag_and_push(state, tag_avail, next_tag_avail, final):
         if final:
             # For final: push both the branch and the tag
             print("Pushing branch and tag to mender-client-subcomponents...")
-            remote = find_upstream_remote(state, "mender-client-subcomponents")
             # First, merge the commit into the actual branch
             execute_git(state, "mender-client-subcomponents", ["merge", "--ff-only", sha])
-            # Then push branch and tag
-            execute_git(state, "mender-client-subcomponents", ["push", remote, current_branch])
-            execute_git(state, "mender-client-subcomponents", ["push", remote, subcomponents_tag])
+            # Then push branch and tag (branch_name without remote prefix)
+            execute_git(state, "mender-client-subcomponents", ["push", subcomp_remote, branch_name])
+            execute_git(state, "mender-client-subcomponents", ["push", subcomp_remote, subcomponents_tag])
         else:
             # For build: only push the tag (leaf commit - not on branch)
             print("Pushing tag only (leaf commit) to mender-client-subcomponents...")
-            remote = find_upstream_remote(state, "mender-client-subcomponents")
-            execute_git(state, "mender-client-subcomponents", ["push", remote, subcomponents_tag])
+            execute_git(state, "mender-client-subcomponents", ["push", subcomp_remote, subcomponents_tag])
 
     finally:
         cleanup_temp_git_checkout(tmpdir)
