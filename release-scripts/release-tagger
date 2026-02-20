@@ -1802,9 +1802,8 @@ def do_release(release_state_file, args):
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--release", action="store_true", help="Start the release process (interactive)"
+    parser = argparse.ArgumentParser(
+        description="Interactive release tool for Mender client components"
     )
     parser.add_argument(
         "--release-state",
@@ -1826,14 +1825,11 @@ def main():
         global DRY_RUN
         DRY_RUN = True
 
-    if args.release:
-        release_state_file = "release-state.yml"
-        if args.release_state_file:
-            release_state_file = args.release_state_file
-        do_release(release_state_file, args)
-    else:
-        parser.print_help()
-        sys.exit(1)
+    # Always run release mode
+    release_state_file = "release-state.yml"
+    if args.release_state_file:
+        release_state_file = args.release_state_file
+    do_release(release_state_file, args)
 
 
 if __name__ == "__main__":
