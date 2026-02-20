@@ -353,18 +353,8 @@ def version_of(repo_dir, repo_name, in_release_version=None):
 def version_sort_key(version):
     """Returns a key used to compare versions."""
 
-    components = version.split(".")
-    assert len(components) == 3, "Invalid version passed to version_sort_key"
-    major, minor = [int(components[0]), int(components[1])]
-    patch_and_beta = components[2].split("b")
-    assert len(patch_and_beta) in [1, 2], "Invalid patch/beta component"
-    patch = int(patch_and_beta[0])
-    if len(patch_and_beta) == 2:
-        beta = int(patch_and_beta[1])
-    else:
-        # Just for comparison purposes: rate high.
-        beta = 99
-    return "%02d%02d%02d%02d" % (major, minor, patch, beta)
+    (major, minor, patch) = version_components(version)
+    return "%02d%02d%02d" % (major, minor, patch)
 
 
 def sorted_final_version_list(git_dir):
@@ -385,14 +375,6 @@ def sorted_final_version_list(git_dir):
             "refs/tags/[0-9][0-9].[0-9].[0-9][0-9]",
             "refs/tags/[0-9][0-9].[0-9][0-9].[0-9]",
             "refs/tags/[0-9][0-9].[0-9][0-9].[0-9][0-9]",
-            "refs/tags/[0-9].[0-9].[0-9]b[0-9]",
-            "refs/tags/[0-9].[0-9].[0-9][0-9]b[0-9]",
-            "refs/tags/[0-9].[0-9][0-9].[0-9]b[0-9]",
-            "refs/tags/[0-9].[0-9][0-9].[0-9][0-9]b[0-9]",
-            "refs/tags/[0-9][0-9].[0-9].[0-9]b[0-9]",
-            "refs/tags/[0-9][0-9].[0-9].[0-9][0-9]b[0-9]",
-            "refs/tags/[0-9][0-9].[0-9][0-9].[0-9]b[0-9]",
-            "refs/tags/[0-9][0-9].[0-9][0-9].[0-9][0-9]b[0-9]",
         ],
         capture=True,
     )
@@ -662,7 +644,6 @@ def check_tag_availability(state):
     this as the tag_avail data structure.
 
     The main fields in this one are:
-      image_tag: <highest Docker tag, or final Docker tag (i.e. mender-X.Y.Z)>
       <repo_name>:
         already_released: <whether this is a final release tag or not (true/false)>
         build_tag: <highest Git build tag, or final Git tag>
@@ -670,8 +651,6 @@ def check_tag_availability(state):
     """
 
     tag_avail = {}
-    highest_overall = -1
-    all_released = True
 
     # Get unique repositories from JSON (source-based deduplication)
     repos = get_repos_from_current_json(state)
@@ -699,7 +678,6 @@ def check_tag_availability(state):
             # Exception happened during Git call. This tag doesn't exist, and
             # we must look for and/or create build tags.
             tag_avail[repo_name]["already_released"] = False
-            all_released = False
 
             # Find highest <version>-buildX tag, where X is a number.
             tags = execute_git(state, repo_name, ["tag"], capture=True)
@@ -714,8 +692,6 @@ def check_tag_availability(state):
             if highest >= 0:
                 # Assign highest tag so far.
                 tag_avail[repo_name]["build_tag"] = highest_tag
-                if highest > highest_overall:
-                    highest_overall = highest
             # Else: Nothing. This repository doesn't have any build tags yet.
 
         if tag_avail[repo_name].get("build_tag") is not None:
@@ -726,14 +702,6 @@ def check_tag_availability(state):
                 capture=True,
             )
             tag_avail[repo_name]["sha"] = sha
-
-    if highest_overall > 0:
-        tag_avail["image_tag"] = "mender-%s-build%d" % (
-            state["version"],
-            highest_overall,
-        )
-    elif all_released:
-        tag_avail["image_tag"] = "mender-%s" % state["version"]
 
     if missing_repos:
         print("Error: missing repos directories.")
@@ -746,11 +714,6 @@ def report_release_state(state, tag_avail):
     """Reports the current state of the release, including current build tags."""
 
     print("Mender release: %s" % state["version"])
-    print("Next build image: ", end="")
-    if tag_avail.get("image_tag") is not None:
-        print(tag_avail["image_tag"])
-    else:
-        print("<Needs a new image tag>")
 
     # Get unique repositories from JSON
     repos = get_repos_from_current_json(state)
@@ -792,24 +755,15 @@ def annotation_version(repo_name, tag_avail):
 
 
 def version_components(version):
-    """Returns a four-tuple containing the version components major, minor, patch
-    and beta, as ints. Beta does not include the "b"."""
+    """Returns a three-tuple containing the version components major, minor, patch as ints."""
 
-    match = re.match(r"^([0-9]+)\.([0-9]+)\.([0-9]+)(?:b([0-9]+))?", version)
+    match = re.match(r"^([0-9]+)\.([0-9]+)\.([0-9]+)", version)
     if match is None:
         raise NotAVersionException(
             "Invalid version '%s' passed to version_components." % version
         )
 
-    if match.group(4) is None:
-        return (int(match.group(1)), int(match.group(2)), int(match.group(3)), None)
-    else:
-        return (
-            int(match.group(1)),
-            int(match.group(2)),
-            int(match.group(3)),
-            int(match.group(4)),
-        )
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
 def find_prev_version(tag_list, version):
@@ -821,18 +775,13 @@ def find_prev_version(tag_list, version):
         return tag_list[0]
 
     try:
-        (
-            version_major,
-            version_minor,
-            version_patch,
-            version_beta,
-        ) = version_components(version)
+        (version_major, version_minor, version_patch) = version_components(version)
     except NotAVersionException:
         # Useful for internal releases with special tags.
         return None
 
     for tag in tag_list:
-        (tag_major, tag_minor, tag_patch, tag_beta) = version_components(tag)
+        (tag_major, tag_minor, tag_patch) = version_components(tag)
 
         if tag_major < version_major:
             return tag
@@ -842,15 +791,6 @@ def find_prev_version(tag_list, version):
             elif tag_minor == version_minor:
                 if tag_patch < version_patch:
                     return tag
-                elif tag_patch == version_patch:
-                    if tag_beta is not None and version_beta is None:
-                        return tag
-                    elif (
-                        tag_beta is not None
-                        and version_beta is not None
-                        and tag_beta < version_beta
-                    ):
-                        return tag
 
     # No lower version found.
     return None
@@ -877,11 +817,8 @@ def find_patch_version(
 
     last_version = prev_version
     while True:
-        (major, minor, patch, beta) = version_components(last_version)
-        if beta is not None:
-            new_version = "%d.%d.%d" % (major, minor, patch)
-        else:
-            new_version = "%d.%d.%d" % (major, minor, patch + 1)
+        (major, minor, patch) = version_components(last_version)
+        new_version = "%d.%d.%d" % (major, minor, patch + 1)
 
         try:
             execute_git(
@@ -979,14 +916,6 @@ def generate_new_tags(state, tag_avail, final):
                 )
             print()
 
-    if final:
-        next_tag_avail["image_tag"] = "mender-" + state["version"]
-    else:
-        next_tag_avail["image_tag"] = "mender-%s-build%d" % (
-            state["version"],
-            highest + 1,
-        )
-
     if not final:
         print("Next build is build %d." % (highest + 1))
     print("Each repository's new tag will be:")
@@ -996,10 +925,10 @@ def generate_new_tags(state, tag_avail, final):
     if not reply.startswith("Y") and not reply.startswith("y"):
         return tag_avail
 
-    return tag_and_push(state, tag_avail, next_tag_avail, final)
+    return tag_and_push(state, tag_avail, next_tag_avail, final, highest + 1)
 
 
-def tag_and_push(state, tag_avail, next_tag_avail, final):
+def tag_and_push(state, tag_avail, next_tag_avail, final, build_number):
     """Creates tags and pushes them. For build tags, creates a leaf commit in
     subcomponents repo. For final tags, pushes the branch too.
 
@@ -1008,6 +937,7 @@ def tag_and_push(state, tag_avail, next_tag_avail, final):
         tag_avail: Current tag availability
         next_tag_avail: Next tag availability (what we're creating)
         final: Boolean - True for final tag, False for build tag
+        build_number: Build number for this tag (e.g., 1 for build1)
 
     Returns:
         Updated next_tag_avail on success, original tag_avail on failure
@@ -1020,14 +950,7 @@ def tag_and_push(state, tag_avail, next_tag_avail, final):
     if final:
         json_filename = "%s.json" % state["version"]
     else:
-        # Extract build number from image_tag
-        match = re.match(".*-build([0-9]+)$", next_tag_avail["image_tag"])
-        if match:
-            build_num = match.group(1)
-            json_filename = "%s-build%s.json" % (state["version"], build_num)
-        else:
-            print("Error: Could not determine build number")
-            return tag_avail
+        json_filename = "%s-build%d.json" % (state["version"], build_number)
 
     # Get current branch (e.g., "5.0.x" for version "5.0.3")
     # Need full remote reference (e.g., "mender/6.0.x") for setup_temp_git_checkout
@@ -1526,13 +1449,11 @@ def determine_version_to_include_in_release(state, repo_info):
     # Is there already a version in the same series? Look at subcomponents repo.
     tag_list = sorted_final_version_list(subcomponents_dir())
     prev_of_integration = find_prev_version(tag_list, state["version"])
-    (overall_major, overall_minor, _, overall_beta) = version_components(
-        state["version"]
-    )
+    (overall_major, overall_minor, _) = version_components(state["version"])
 
     # Handle case where there's no previous version
     if prev_of_integration:
-        (prev_major, prev_minor, _, _) = version_components(prev_of_integration)
+        (prev_major, prev_minor, _) = version_components(prev_of_integration)
     else:
         # No previous version - won't match any series
         prev_major = prev_minor = -1
@@ -1546,16 +1467,12 @@ def determine_version_to_include_in_release(state, repo_info):
         prev_of_repo = version_of(
             subcomponents_dir(), repo_name, in_release_version=prev_of_integration,
         )
-        if overall_beta is not None:
-            (major, minor, patch, _) = version_components(prev_of_repo)
-            new_repo_version = "%d.%d.%db%d" % (major, minor, patch, overall_beta)
-        else:
-            new_repo_version = find_patch_version(
-                state, repo_name, prev_of_repo, next_unreleased=True
-            )
-            prev_of_repo_independent = find_patch_version(
-                state, repo_name, prev_of_repo, last_released=True
-            )
+        new_repo_version = find_patch_version(
+            state, repo_name, prev_of_repo, next_unreleased=True
+        )
+        prev_of_repo_independent = find_patch_version(
+            state, repo_name, prev_of_repo, last_released=True
+        )
         # Derive follow branch from new version (e.g., "5.0.3" -> "origin/5.0.x")
         remote = find_upstream_remote(state, repo_name)
         branch = re.sub(r"\.[^.]+$", ".x", new_repo_version)
@@ -1576,8 +1493,6 @@ def determine_version_to_include_in_release(state, repo_info):
             prev_of_repo = None
             new_repo_version = "1.0.0"
         prev_of_repo_independent = prev_of_repo
-        if overall_beta:
-            new_repo_version += "b%d" % overall_beta
 
     if prev_of_repo:
         print_line()
