@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2023 Northern.tech AS
+# Copyright 2026 Northern.tech AS
 #
 #    Licensed under the Apache License, Version 2.0 (the "License");
 #    you may not use this file except in compliance with the License.
@@ -21,27 +21,10 @@ import re
 import shutil
 import subprocess
 import sys
-import traceback
-import datetime
-
-try:
-    import yaml
-except ImportError:
-    print("PyYAML missing, try running 'sudo pip3 install pyyaml'.")
-    sys.exit(2)
+import yaml
 
 # Disable pager during menu navigation.
 os.environ["GIT_PAGER"] = "cat"
-
-# This is basically a YAML file which contains the state of the release tool.
-# The easiest way to understand its format is by just looking at it after the
-# key fields have been filled in. This is updated continuously while the script
-# is operating.
-# The repositories are indexed by their Git repository names.
-RELEASE_TOOL_STATE = None
-
-# What we use in commits messages when bumping versions.
-VERSION_BUMP_STRING = "chore: Bump versions for Mender"
 
 # Whether or not pushes should really happen.
 PUSH = True
@@ -417,9 +400,8 @@ def sorted_final_version_list(git_dir):
 
 
 def state_value(state, key_list):
-    """Gets a value from the state variable stored in the RELEASE_TOOL_STATE yaml
-    file. The key_list is a list of indexes, where each element represents a
-    subkey of the previous key.
+    """Gets a value from the state variable. The key_list is a list of indexes,
+    where each element represents a subkey of the previous key.
 
     The difference between this function and simply indexing 'state' directly is
     that if any subkey is not found, including parent keys, None is returned
@@ -1659,9 +1641,6 @@ double check this.
 
 def do_release(release_state_file, args):
     """Handles the interactive menu for doing a release."""
-
-    global RELEASE_TOOL_STATE
-    RELEASE_TOOL_STATE = release_state_file
 
     if os.path.exists(release_state_file):
         while True:
