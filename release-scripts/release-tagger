@@ -65,16 +65,6 @@ def print_line():
     )
 
 
-def integration_dir():
-    """Return the location of the mender-client-subcomponents repository.
-
-    Note: This function is kept for backward compatibility but now points to
-    mender-client-subcomponents instead of the deprecated integration repo.
-    New code should use subcomponents_dir() instead.
-    """
-    return subcomponents_dir()
-
-
 def ask(text):
     """Ask a question and return the reply."""
 
@@ -291,24 +281,6 @@ def get_current_release_json_path(state=None, version=None):
 
     # Fall back to next.json
     return os.path.join(releases_dir, "next.json")
-
-
-def get_components_from_current_json(state):
-    """Get component list from appropriate JSON file based on state.
-
-    DEPRECATED: Use get_repos_from_current_json() instead.
-    This function returns raw component list which may have duplicates
-    for repos with multiple components.
-
-    Args:
-        state: Release state dict
-
-    Returns:
-        list: List of component dicts
-    """
-    json_path = get_current_release_json_path(state)
-    json_data = read_release_json(json_path)
-    return get_component_list_from_json(json_data)
 
 
 def get_repos_from_current_json(state):
@@ -563,34 +535,6 @@ def query_execute_git_list(execute_git_list):
 
     for cmd in execute_git_list:
         execute_git(cmd[0], cmd[1], cmd[2])
-
-    return True
-
-
-def query_execute_list(execute_list, env=None):
-    """Executes the list of commands after asking first. The argument is a list of
-    lists, where the inner list is the argument to subprocess.check_call.
-
-    The function automatically takes into account Docker commands with side
-    effects and applies push simulation and dry run if those are enabled.
-    """
-
-    print_line()
-    for cmd in execute_list:
-        # Provide quotes around arguments with spaces in them.
-        print(" ".join(['"%s"' % str if str.find(" ") >= 0 else str for str in cmd]))
-    reply = ask("\nOk to execute the above commands? ")
-    if not reply.startswith("Y") and not reply.startswith("y"):
-        return False
-
-    for cmd in execute_list:
-        is_push = cmd[0] == "docker" and cmd[1] == "push"
-        is_change = is_push or (cmd[0] == "docker" and cmd[1] == "tag")
-        if (not PUSH and is_push) or (DRY_RUN and is_change):
-            print("Would have executed: %s" % " ".join(cmd))
-            continue
-
-        subprocess.check_call(cmd, env=env)
 
     return True
 
