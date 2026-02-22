@@ -148,20 +148,6 @@ def get_unique_sources_from_json(json_data):
     return sorted(sources)
 
 
-def get_source_for_component(json_data, component_name):
-    """Get the source repository for a component.
-
-    Args:
-        json_data: Parsed JSON dict
-        component_name: Name of component
-
-    Returns:
-        str: Source URL or None if component not found
-    """
-    component = find_component_in_json(json_data, component_name)
-    return component['source'] if component else None
-
-
 def get_components_for_source(json_data, source):
     """Get all component names that share the same source repository.
 
@@ -283,7 +269,7 @@ def get_repos_from_current_json(state):
 # ============================================================================
 
 
-def version_of(repo_dir, repo_name, in_release_version=None):
+def version_of(repo_name, in_release_version=None):
     """Get version of a repository from JSON files.
 
     Note: This function now works with REPOSITORY NAMES, not component names.
@@ -291,7 +277,6 @@ def version_of(repo_dir, repo_name, in_release_version=None):
     'mender-update' both use the 'mender' repository).
 
     Args:
-        repo_dir: Base directory - kept for compatibility but not used
         repo_name: Name of repository (e.g., 'mender', 'mender-connect')
                   NOT component name (not 'mender-auth')
         in_release_version: Which release to query (e.g., '5.0.0', '6.0.x', 'next')
@@ -1365,7 +1350,7 @@ def determine_version_bump(state, repo_name, from_v, to_v):
         state, repo_name, ["rev-list", "%s..%s" % (from_v, to_v)], capture=True
     ).split("\n")
 
-    (major, minor, patch, _) = version_components(from_v)
+    (major, minor, patch) = version_components(from_v)
     version_mask = [False, False, False]
 
     for sha in revlist:
@@ -1439,9 +1424,7 @@ def determine_version_to_include_in_release(state, repo_info):
     follow_branch = None
     if prev_of_integration and overall_major == prev_major and overall_minor == prev_minor:
         # Same series. Use it as basis.
-        prev_of_repo = version_of(
-            subcomponents_dir(), repo_name, in_release_version=prev_of_integration,
-        )
+        prev_of_repo = version_of(repo_name, in_release_version=prev_of_integration)
         new_repo_version = find_patch_version(
             state, repo_name, prev_of_repo, next_unreleased=True
         )
@@ -1529,7 +1512,7 @@ double check this.
     return True
 
 
-def do_release(release_state_file, args):
+def do_release(release_state_file):
     """Handles the interactive menu for doing a release."""
 
     if os.path.exists(release_state_file):
@@ -1605,8 +1588,6 @@ def do_release(release_state_file, args):
         print_line()
         print("Current state of release:")
         report_release_state(state, tag_avail)
-
-        minor_version = state["version"][0 : state["version"].rindex(".")]
 
         print("What do you want to do?")
         print("-- Main operations")
@@ -1685,7 +1666,7 @@ def main():
     release_state_file = "release-state.yml"
     if args.release_state_file:
         release_state_file = args.release_state_file
-    do_release(release_state_file, args)
+    do_release(release_state_file)
 
 
 if __name__ == "__main__":
