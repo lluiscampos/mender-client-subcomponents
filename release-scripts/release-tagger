@@ -26,11 +26,6 @@ import yaml
 # Disable pager during menu navigation.
 os.environ["GIT_PAGER"] = "cat"
 
-# Whether or not pushes should really happen.
-PUSH = True
-# Whether this is a dry-run.
-DRY_RUN = False
-
 CONVENTIONAL_COMMIT_REGEX = (
     r"^(?P<type>build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)"
     r"(?:\(\w+\))?:.*"
@@ -427,32 +422,12 @@ def execute_git(state, repo_git, args, capture=False, capture_stderr=False):
     of arguments (not including git itself). capture and capture_stderr
     arguments causes it to return stdout or stdout+stderr as a string.
 
-    state can be None, but if so, then repo_git needs to be an absolute path.
-
-    The function automatically takes into account Git commands with side effects
-    and applies push simulation and dry run if those are enabled."""
-
-    is_push = args[0] == "push"
-    is_change = (
-        is_push
-        or (args[0] == "tag" and len(args) > 1)
-        or (args[0] == "branch" and len(args) > 1)
-        or (args[0] == "config" and args[1] != "-l")
-        or (args[0] == "checkout")
-        or (args[0] == "commit")
-        or (args[0] == "fetch")
-        or (args[0] == "init")
-        or (args[0] == "reset")
-    )
+    state can be None, but if so, then repo_git needs to be an absolute path."""
 
     if os.path.isabs(repo_git):
         git_dir = repo_git
     else:
         git_dir = os.path.join(state["repo_dir"], repo_git)
-
-    if (not PUSH and is_push) or (DRY_RUN and is_change):
-        print("Would have executed: cd %s && git %s" % (git_dir, " ".join(args)))
-        return None
 
     fd = os.open(".", flags=os.O_RDONLY)
     os.chdir(git_dir)
@@ -1704,20 +1679,7 @@ def main():
         dest="release_state_file",
         help="State file for releases, default is release-state.yml",
     )
-    parser.add_argument(
-        "--simulate-push", action="store_true", help="Simulate (don't do) pushes"
-    )
-    parser.add_argument(
-        "-n", "--dry-run", action="store_true", help="Don't take any action at all"
-    )
     args = parser.parse_args()
-
-    if args.simulate_push:
-        global PUSH
-        PUSH = False
-    if args.dry_run:
-        global DRY_RUN
-        DRY_RUN = True
 
     # Always run release mode
     release_state_file = "release-state.yml"
