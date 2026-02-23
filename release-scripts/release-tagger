@@ -663,6 +663,45 @@ def check_tag_availability(state):
             )
             tag_avail[repo_name]["sha"] = sha
 
+    # Also check mender-client-subcomponents itself
+    tag_avail["mender-client-subcomponents"] = {}
+    try:
+        # Check if final tag exists
+        execute_git(
+            state,
+            "mender-client-subcomponents",
+            ["rev-parse", state["version"]],
+            capture=True,
+            capture_stderr=True,
+        )
+        # Final tag exists
+        tag_avail["mender-client-subcomponents"]["already_released"] = True
+        tag_avail["mender-client-subcomponents"]["build_tag"] = state["version"]
+    except subprocess.CalledProcessError:
+        # No final tag, look for build tags
+        tag_avail["mender-client-subcomponents"]["already_released"] = False
+
+        tags = execute_git(state, "mender-client-subcomponents", ["tag"], capture=True)
+        highest = -1
+        for tag in tags.split("\n"):
+            match = re.match(
+                "^%s-build([0-9]+)$" % re.escape(state["version"]), tag
+            )
+            if match is not None and int(match.group(1)) > highest:
+                highest = int(match.group(1))
+                highest_tag = tag
+        if highest >= 0:
+            tag_avail["mender-client-subcomponents"]["build_tag"] = highest_tag
+
+    if tag_avail["mender-client-subcomponents"].get("build_tag") is not None:
+        sha = execute_git(
+            state,
+            "mender-client-subcomponents",
+            ["rev-parse", "--short", tag_avail["mender-client-subcomponents"]["build_tag"] + "~0"],
+            capture=True,
+        )
+        tag_avail["mender-client-subcomponents"]["sha"] = sha
+
     if missing_repos:
         print("Error: missing repos directories.")
         sys.exit(2)
@@ -695,6 +734,18 @@ def report_release_state(state, tag_avail):
                 tag = "%s (%s)" % (tag, tag_avail[repo_name]["sha"])
 
         print(fmt_str % (repo_name, state[repo_name]["version"], tag))
+
+    # Also show mender-client-subcomponents
+    if tag_avail.get("mender-client-subcomponents"):
+        if tag_avail["mender-client-subcomponents"]["already_released"]:
+            tag = state["version"]
+        else:
+            tag = tag_avail["mender-client-subcomponents"].get("build_tag")
+            if tag is None:
+                tag = "<Needs a new build tag>"
+            else:
+                tag = "%s (%s)" % (tag, tag_avail["mender-client-subcomponents"]["sha"])
+        print(fmt_str % ("mender-client-subcomponents", state["version"], tag))
 
 
 def annotation_version(repo_name, tag_avail):
