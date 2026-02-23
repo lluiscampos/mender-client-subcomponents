@@ -1408,12 +1408,12 @@ def determine_version_to_include_in_release(state, repo_info):
 
     # Is there already a version in the same series? Look at subcomponents repo.
     tag_list = sorted_final_version_list(subcomponents_dir())
-    prev_of_integration = find_prev_version(tag_list, state["version"])
+    prev_mender_client_release = find_prev_version(tag_list, state["version"])
     (overall_major, overall_minor, _) = version_components(state["version"])
 
     # Handle case where there's no previous version
-    if prev_of_integration:
-        (prev_major, prev_minor, _) = version_components(prev_of_integration)
+    if prev_mender_client_release:
+        (prev_major, prev_minor, _) = version_components(prev_mender_client_release)
     else:
         # No previous version - won't match any series
         prev_major = prev_minor = -1
@@ -1422,14 +1422,11 @@ def determine_version_to_include_in_release(state, repo_info):
     prev_of_repo_independent = None
     new_repo_version = None
     follow_branch = None
-    if prev_of_integration and overall_major == prev_major and overall_minor == prev_minor:
+    if prev_mender_client_release and overall_major == prev_major and overall_minor == prev_minor:
         # Same series. Use it as basis.
-        prev_of_repo = version_of(repo_name, in_release_version=prev_of_integration)
+        prev_of_repo = version_of(repo_name, in_release_version=prev_mender_client_release)
         new_repo_version = find_patch_version(
             state, repo_name, prev_of_repo, next_unreleased=True
-        )
-        prev_of_repo_independent = find_patch_version(
-            state, repo_name, prev_of_repo, last_released=True
         )
         # Derive follow branch from new version (e.g., "5.0.3" -> "origin/5.0.x")
         remote = find_upstream_remote(state, repo_name)
@@ -1450,7 +1447,6 @@ def determine_version_to_include_in_release(state, repo_info):
             # No previous version at all. Start at 1.0.0.
             prev_of_repo = None
             new_repo_version = "1.0.0"
-        prev_of_repo_independent = prev_of_repo
 
     if prev_of_repo:
         print_line()
@@ -1467,15 +1463,6 @@ def determine_version_to_include_in_release(state, repo_info):
             "Above is the output of:\n\ncd %s\ngit %s\n"
             % (repo_name, " ".join(git_cmd))
         )
-
-        if prev_of_repo_independent and prev_of_repo_independent != prev_of_repo:
-            print(
-                """WARNING: %s is not the latest patch release, the latest patch release
-is %s, which does not occur in any subcomponents version. You might want to
-double check this.
-"""
-                % (prev_of_repo, prev_of_repo_independent)
-            )
 
         reply = ask(
             "Based on this, is there a reason for a new release of %s? (Yes/No/Skip) "
