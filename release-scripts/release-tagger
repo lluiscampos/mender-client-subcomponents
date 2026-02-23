@@ -741,15 +741,13 @@ def report_release_state(state, tag_avail):
             tag = state["version"]
         else:
             build_tag = tag_avail["mender-client-subcomponents"].get("build_tag")
-            if build_tag is None:
-                tag = "<Release JSON will be created>"
+            sha = tag_avail["mender-client-subcomponents"].get("sha")
+            if build_tag and sha:
+                # Tag exists with SHA (after T or F has completed)
+                tag = "%s (%s)" % (build_tag, sha)
             else:
-                sha = tag_avail["mender-client-subcomponents"].get("sha")
-                if sha:
-                    tag = "%s (%s)" % (build_tag, sha)
-                else:
-                    # No SHA yet (tentative tag in preview)
-                    tag = build_tag
+                # No tag yet, or preview mode
+                tag = "<Release JSON will be created>"
         print(fmt_str % ("mender-client-subcomponents", state["version"], tag))
 
 
