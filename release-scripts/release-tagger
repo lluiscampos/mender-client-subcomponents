@@ -1042,7 +1042,7 @@ def tag_and_push(state, tag_avail, next_tag_avail, final, build_number):
         print_line()
         print("Commit created:")
         print()
-        execute_git(state, tmpdir, ["show", "--stat"])
+        execute_git(state, tmpdir, ["show"])
         print()
 
         # Get the SHA of the commit we just made
