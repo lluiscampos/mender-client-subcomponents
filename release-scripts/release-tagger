@@ -1642,7 +1642,6 @@ def do_release(release_state_file):
         print("  Q) Quit (your state is saved in %s)" % release_state_file)
         print()
         print("-- Less common operations")
-        print("  P) Push current build tags (not necessary unless -s was used before)")
         print("  U) Purge build tags from all repositories")
         print(
             "  C) Create new series branch (A.B.x style) for each repository that lacks one"
@@ -1665,22 +1664,6 @@ def do_release(release_state_file):
             reply = ask("Purge all build tags from all repositories (recommended)? ")
             if reply.startswith("Y") or reply.startswith("y"):
                 purge_build_tags(state, tag_avail)
-        elif reply.lower() == "p":
-            # Push current build tags
-            git_list = []
-            repos = get_repos_from_current_json(state)
-            for repo_info in repos:
-                repo_name = repo_info['repo']
-                if tag_avail[repo_name].get("build_tag"):
-                    remote = find_upstream_remote(state, repo_name)
-                    git_list.append(
-                        (
-                            state,
-                            repo_name,
-                            ["push", remote, tag_avail[repo_name]["build_tag"]],
-                        )
-                    )
-            query_execute_git_list(git_list)
         elif reply.lower() == "u":
             purge_build_tags(state, tag_avail)
         elif reply.lower() == "c":
