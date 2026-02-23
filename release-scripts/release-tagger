@@ -962,15 +962,6 @@ def tag_and_push(state, tag_avail, next_tag_avail, final, build_number):
         json_path = os.path.join(tmpdir, "subcomponents", "releases", json_filename)
         write_release_json(json_path, new_json)
 
-        # Show what we're committing
-        print_line()
-        print("Changes to commit:")
-        print()
-        execute_git(state, tmpdir, ["diff"])
-        print()
-        print("New JSON file: %s" % json_filename)
-        print()
-
         # Commit the JSON file
         commit_message = "Release %s\n\nUpdated component versions for %s" % (
             json_filename.replace('.json', ''),
@@ -992,6 +983,13 @@ def tag_and_push(state, tag_avail, next_tag_avail, final, build_number):
 
         if not query_execute_git_list(git_list):
             return tag_avail
+
+        # Show the commit we just made
+        print_line()
+        print("Commit created:")
+        print()
+        execute_git(state, tmpdir, ["show", "--stat"])
+        print()
 
         # Get the SHA of the commit we just made
         sha = execute_git(
