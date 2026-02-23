@@ -1396,16 +1396,6 @@ def determine_version_to_include_in_release(state, repo_info):
     if version is not None:
         return True
 
-    # Show changelog PR link once per session
-    if not state_value(state, ["_changelog_link_shown"]):
-        print()
-        print("=" * 70)
-        print("Changelog PRs:")
-        print("https://github.com/mendersoftware/mender-client-subcomponents/pulls?q=is%3Apr+is%3Aopen+label%3A%22autorelease%3A+pending%22")
-        print("=" * 70)
-        print()
-        update_state(state, ["_changelog_link_shown"], True)
-
     # Is there already a version in the same series? Look at subcomponents repo.
     tag_list = sorted_final_version_list(subcomponents_dir())
     prev_mender_client_release = find_prev_version(tag_list, state["version"])
@@ -1463,6 +1453,11 @@ def determine_version_to_include_in_release(state, repo_info):
             "Above is the output of:\n\ncd %s\ngit %s\n"
             % (repo_name, " ".join(git_cmd))
         )
+
+        print_line()
+        print("Changelog PRs:")
+        print("https://github.com/mendersoftware/mender-client-subcomponents/pulls?q=is%3Apr+is%3Aopen+label%3A%22autorelease%3A+pending%22")
+        print_line()
 
         reply = ask(
             "Based on this, is there a reason for a new release of %s? (Yes/No/Skip) "
