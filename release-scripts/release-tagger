@@ -1065,6 +1065,10 @@ def tag_and_push(state, tag_avail, next_tag_avail, final, build_number):
         print()
         print("Created tag %s in mender-client-subcomponents at %s" % (subcomponents_tag, sha))
 
+        # Update next_tag_avail with the new tag and SHA
+        next_tag_avail["mender-client-subcomponents"]["build_tag"] = subcomponents_tag
+        next_tag_avail["mender-client-subcomponents"]["sha"] = sha
+
         # Push behavior depends on final vs build
         subcomp_push_list = []
         if final:
