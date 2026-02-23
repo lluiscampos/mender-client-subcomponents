@@ -1190,9 +1190,15 @@ def purge_build_tags(state, tag_avail):
 
 
 def create_release_branches(state, tag_avail):
+    """Create release branches for repositories that need them.
+
+    Returns:
+        bool: True if mender-client-subcomponents branch was created, False otherwise
+    """
     print("Checking if any repository needs a new branch...")
 
     any_repo_needs_branch = False
+    subcomponents_branch_created = False
 
     # Get unique repositories from JSON
     repos = get_repos_from_current_json(state)
@@ -1295,33 +1301,136 @@ def create_release_branches(state, tag_avail):
                         ],
                     )
                 )
-                query_execute_git_list(cmd_list)
+                if query_execute_git_list(cmd_list):
+                    subcomponents_branch_created = True
 
     if not any_repo_needs_branch:
         # Matches the beginning text above.
         print("No.")
 
+    return subcomponents_branch_created
+
+
+def create_release_series_json(state):
+    """Create X.Y.x.json file for a new release branch with branch names.
+
+    This function creates the base JSON file for a release series (e.g., 6.0.x.json)
+    containing branch names (e.g., "5.0.x", "2.3.x") for each component, which will
+    later be used by T/F to create build and final tags.
+
+    Args:
+        state: Release state dict with decided versions for each repo
+    """
+    version = state["version"]
+    if not re.match(r'^\d+\.\d+\.\d+', version):
+        print("Error: Can only create series JSON for release versions (X.Y.Z), not '%s'" % version)
+        return
+
+    parts = version.split('.')
+    branch_name = "%s.%s.x" % (parts[0], parts[1])
+    json_filename = "%s.%s.x.json" % (parts[0], parts[1])
+
+    print()
+    print("Creating %s with component branch names..." % json_filename)
+    print()
+
+    # Read current JSON (next.json) to preserve component order and source URLs
+    current_json_path = get_current_release_json_path(state)
+    current_json = read_release_json(current_json_path)
+
+    # Create JSON with branch names (not version tags)
+    new_json = {
+        "version": json_filename.replace('.json', ''),
+        "components": []
+    }
+
+    # Build component list - convert state versions to branch names
+    for component in current_json['components']:
+        comp_name = component['name']
+        comp_source = component['source']
+        repo_name = extract_repo_name_from_source(comp_source)
+
+        # Convert version to branch name (e.g., "5.0.4" -> "5.0.x")
+        decided_version = state[repo_name]["version"]
+        if re.match(r'^\d+\.\d+\.\d+', decided_version):
+            v_parts = decided_version.split('.')
+            branch_version = "%s.%s.x" % (v_parts[0], v_parts[1])
+        else:
+            # Keep as-is if not a version number
+            branch_version = decided_version
+
+        new_json['components'].append({
+            'name': comp_name,
+            'version': branch_version,
+            'source': comp_source
+        })
+
+    # Create temp checkout
+    tmpdir = setup_temp_git_checkout(
+        state, "mender-client-subcomponents", branch_name
+    )
+
+    try:
+        # Write JSON file
+        json_path = os.path.join(tmpdir, "subcomponents", "releases", json_filename)
+        write_release_json(json_path, new_json)
+
+        # Show what we're creating
+        print("JSON contents:")
+        print(json.dumps(new_json, indent=2))
+        print()
+
+        # Commit
+        commit_message = "Create %s for release branch\n\nInitialize component versions for %s series" % (
+            json_filename, branch_name
+        )
+        git_list = [
+            (state, tmpdir, ["add", os.path.join("subcomponents", "releases", json_filename)]),
+            (state, tmpdir, ["commit", "-s", "-m", commit_message]),
+        ]
+
+        if not query_execute_git_list(git_list):
+            print("Commit aborted.")
+            return
+
+        # Push
+        remote = find_upstream_remote(state, "mender-client-subcomponents")
+        push_list = [(state, tmpdir, ["push", remote, branch_name])]
+        if not query_execute_git_list(push_list):
+            print("Push aborted.")
+            return
+
+        print()
+        print("✓ Successfully created and pushed %s" % json_filename)
+
+    finally:
+        cleanup_temp_git_checkout(tmpdir)
+
 
 def commit_current_json_state(state, tag_avail):
-    """Commits the current state to a JSON file in mender-client-subcomponents.
+    """Updates the X.Y.x series JSON file with current component branch names.
 
-    This is useful for updating the JSON file on a branch to reflect current
-    component versions without creating tags.
+    This is useful for updating the JSON file on a release branch to reflect
+    current component versions without creating tags. Only works for release
+    series (X.Y.Z versions), not for "next" or other non-release versions.
 
     Args:
         state: Release state dict
         tag_avail: Current tag availability
     """
-    # Get current branch (e.g., "5.0.x" for version "5.0.3")
     version = state["version"]
-    if re.match(r'^\d+\.\d+\.\d+', version):
-        parts = version.split('.')
-        current_branch = "%s.%s.x" % (parts[0], parts[1])
-        json_filename = "%s.%s.x.json" % (parts[0], parts[1])
-    else:
-        # For versions like "next"
-        current_branch = "master"
-        json_filename = "next.json"
+    if not re.match(r'^\d+\.\d+\.\d+', version):
+        print()
+        print("Error: Option I only works for release series (X.Y.Z versions).")
+        print("Current version '%s' is not a release version." % version)
+        print("This option cannot be used to update next.json.")
+        print()
+        return
+
+    # Get current branch (e.g., "5.0.x" for version "5.0.3")
+    parts = version.split('.')
+    current_branch = "%s.%s.x" % (parts[0], parts[1])
+    json_filename = "%s.%s.x.json" % (parts[0], parts[1])
 
     print()
     print("Will commit to branch: %s" % current_branch)
@@ -1341,18 +1450,24 @@ def commit_current_json_state(state, tag_avail):
     current_json_path = get_current_release_json_path(state)
     current_json = read_release_json(current_json_path)
 
-    # Build component list with versions from state
+    # Build component list - convert state versions to branch names
     for component in current_json['components']:
         comp_name = component['name']
         comp_source = component['source']
         repo_name = extract_repo_name_from_source(comp_source)
 
-        # Use version from state
-        new_version = state[repo_name]["version"]
+        # Convert version to branch name (e.g., "5.0.4" -> "5.0.x")
+        decided_version = state[repo_name]["version"]
+        if re.match(r'^\d+\.\d+\.\d+', decided_version):
+            v_parts = decided_version.split('.')
+            branch_version = "%s.%s.x" % (v_parts[0], v_parts[1])
+        else:
+            # Keep as-is if not a version number
+            branch_version = decided_version
 
         new_json['components'].append({
             'name': comp_name,
-            'version': new_version,
+            'version': branch_version,
             'source': comp_source
         })
 
@@ -1620,7 +1735,16 @@ def do_release(release_state_file):
     # Fill data about available tags.
     tag_avail = check_tag_availability(state)
 
-    create_release_branches(state, tag_avail)
+    # Create release branches if needed
+    subcomponents_branch_created = create_release_branches(state, tag_avail)
+
+    # If mender-client-subcomponents branch was just created, create X.Y.x.json
+    if subcomponents_branch_created:
+        print_line()
+        print("Automatically creating X.Y.x series JSON for new release branch...")
+        create_release_series_json(state)
+        # Refresh tag availability after creating the JSON
+        tag_avail = check_tag_availability(state)
 
     first_time = True
     while True:
@@ -1646,7 +1770,7 @@ def do_release(release_state_file):
         print(
             "  C) Create new series branch (A.B.x style) for each repository that lacks one"
         )
-        print("  I) Commit current state to JSON file in mender-client-subcomponents")
+        print("  I) Update X.Y.x series JSON file (for release branches only)")
 
         reply = ask("Choice? ")
 
