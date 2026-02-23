@@ -673,7 +673,7 @@ def check_tag_availability(state):
 def report_release_state(state, tag_avail):
     """Reports the current state of the release, including current build tags."""
 
-    print("Mender release: %s" % state["version"])
+    print("Mender Client release: %s" % state["version"])
 
     # Get unique repositories from JSON
     repos = get_repos_from_current_json(state)
@@ -1553,7 +1553,7 @@ def do_release(release_state_file):
         update_state(state, ["repo_dir"], reply)
 
     if state_value(state, ["version"]) is None:
-        update_state(state, ["version"], ask("Which release of Mender will this be? "))
+        update_state(state, ["version"], ask("Which release of Mender Client will this be? "))
 
     input = ask(
         "Do you want to fetch all the latest tags and branches in all repositories (will not change checked-out branch)? "
@@ -1653,7 +1653,7 @@ def do_release(release_state_file):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Interactive release tool for Mender client components"
+        description="Interactive release tool for Mender Client components"
     )
     parser.add_argument(
         "--release-state",
