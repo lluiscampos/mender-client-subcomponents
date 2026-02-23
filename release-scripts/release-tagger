@@ -1451,7 +1451,7 @@ def determine_version_to_include_in_release(state, repo_info):
     if prev_of_repo:
         print_line()
 
-        git_cmd = ["log", "--oneline", "%s..%s" % (prev_of_repo, follow_branch)]
+        git_cmd = ["log", "--oneline", "--no-merges", "--no-decorate", "%s..%s" % (prev_of_repo, follow_branch)]
         print("cd %s && git %s:" % (repo_name, " ".join(git_cmd)))
         execute_git(state, repo_name, git_cmd)
 
