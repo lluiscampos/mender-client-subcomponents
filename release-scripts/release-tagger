@@ -1409,7 +1409,6 @@ def determine_version_to_include_in_release(state, repo_info):
         prev_major = prev_minor = -1
 
     prev_of_repo = None
-    prev_of_repo_independent = None
     new_repo_version = None
     follow_branch = None
     if prev_mender_client_release and overall_major == prev_major and overall_minor == prev_minor:
