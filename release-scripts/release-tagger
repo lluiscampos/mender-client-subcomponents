@@ -26,6 +26,9 @@ import yaml
 # Disable pager during menu navigation.
 os.environ["GIT_PAGER"] = "cat"
 
+# Override remote name for testing (set via --dry-run-remote)
+DRY_RUN_REMOTE = None
+
 CONVENTIONAL_COMMIT_REGEX = (
     r"^(?P<type>build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)"
     r"(?:\(\w+\))?:.*"
@@ -570,6 +573,10 @@ def find_upstream_remote(state, repo_path, repo_name=None):
 
     With repo_name None (default), the name is taken from basename(repo_path)
     """
+
+    # Override for testing/debugging
+    if DRY_RUN_REMOTE is not None:
+        return DRY_RUN_REMOTE
 
     if repo_name is None:
         repo_name = os.path.basename(repo_path)
@@ -1929,7 +1936,24 @@ def main():
         dest="release_state_file",
         help="State file for releases, default is release-state.yml",
     )
+    parser.add_argument(
+        "--dry-run-remote",
+        dest="dry_run_remote",
+        help="Override remote name for all git operations (for testing/debugging)",
+    )
     args = parser.parse_args()
+
+    # Set dry-run remote if specified
+    if args.dry_run_remote:
+        global DRY_RUN_REMOTE
+        DRY_RUN_REMOTE = args.dry_run_remote
+        print_line()
+        print(
+            "WARNING: DRY RUN MODE - All git operations will use remote '%s'"
+            % DRY_RUN_REMOTE
+        )
+        print_line()
+        print()
 
     # Always run release mode
     release_state_file = "release-state.yml"
