@@ -49,11 +49,8 @@ def print_line():
 def ask(text):
     """Ask a question and return the reply."""
 
-    sys.stdout.write(text)
-    sys.stdout.flush()
-    reply = sys.stdin.readline().strip()
-    # Make a separator before next information chunk.
-    sys.stdout.write("\n")
+    reply = input(text)
+    print()
     return reply
 
 
