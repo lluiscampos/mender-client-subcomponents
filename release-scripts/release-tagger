@@ -15,6 +15,7 @@
 
 import argparse
 import copy
+from contextlib import contextmanager
 import json
 import os
 import re
@@ -468,9 +469,9 @@ def query_execute_git_list(execute_git_list):
     return True
 
 
-def setup_temp_git_checkout(state, repo_git, ref, remote_name=None):
-    """Checks out a temporary Git directory, and returns an absolute path to
-    it. Checks out the ref specified in ref.
+@contextmanager
+def temp_git_checkout(state, repo_git, ref, remote_name=None):
+    """Context manager that checks out a temporary Git directory and cleans up on exit.
 
     Args:
         state: Release state dict
@@ -479,6 +480,9 @@ def setup_temp_git_checkout(state, repo_git, ref, remote_name=None):
         remote_name: Optional remote name to configure in temp checkout.
                     If provided, will add this remote as "origin" using the
                     URL from the real repository's git config.
+
+    Yields:
+        str: Absolute path to the temporary checkout directory
     """
 
     tmpdir = os.path.join(state["repo_dir"], "tmp_checkout", repo_git)
@@ -553,11 +557,14 @@ def setup_temp_git_checkout(state, repo_git, ref, remote_name=None):
             capture=True,
             capture_stderr=True,
         )
+
+        yield tmpdir
+
     except:
         print("Output from previous Git command: %s" % output)
         raise
-
-    return tmpdir
+    finally:
+        cleanup_temp_git_checkout(tmpdir)
 
 
 def cleanup_temp_git_checkout(tmpdir):
@@ -1031,11 +1038,9 @@ def tag_and_push(state, tag_avail, next_tag_avail, final, build_number):
         current_branch = "%s/main" % subcomp_remote
 
     # Create temporary checkout of mender-client-subcomponents
-    tmpdir = setup_temp_git_checkout(
+    with temp_git_checkout(
         state, "mender-client-subcomponents", current_branch, remote_name=subcomp_remote
-    )
-
-    try:
+    ) as tmpdir:
         # Build version_source dict from next_tag_avail
         version_source = {}
         for repo_info in repos:
@@ -1113,9 +1118,6 @@ def tag_and_push(state, tag_avail, next_tag_avail, final, build_number):
 
         if not query_execute_git_list(subcomp_push_list):
             return tag_avail
-
-    finally:
-        cleanup_temp_git_checkout(tmpdir)
 
     # Now tag and push all component repositories
     print_line()
@@ -1428,11 +1430,9 @@ def create_and_commit_json(
     new_json = build_release_json_dict(state, json_filename, version_source)
 
     # Setup temp checkout with remote configured
-    tmpdir = setup_temp_git_checkout(
+    with temp_git_checkout(
         state, "mender-client-subcomponents", branch_ref, remote_name=remote
-    )
-
-    try:
+    ) as tmpdir:
         # Write JSON file
         json_path = os.path.join(tmpdir, "subcomponents", "releases", json_filename)
         write_release_json(json_path, new_json)
@@ -1471,9 +1471,6 @@ def create_and_commit_json(
             return (False, None)
 
         return (True, sha)
-
-    finally:
-        cleanup_temp_git_checkout(tmpdir)
 
 
 def create_release_series_json(state):
