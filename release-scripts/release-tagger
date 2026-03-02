@@ -455,24 +455,18 @@ def execute_git(state, repo_git, args, capture=False, capture_stderr=False):
     else:
         git_dir = os.path.join(state["repo_dir"], repo_git)
 
-    fd = os.open(".", flags=os.O_RDONLY)
-    os.chdir(git_dir)
     if capture_stderr:
         stderr = subprocess.STDOUT
     else:
         stderr = None
 
-    try:
-        if capture:
-            output = (
-                subprocess.check_output(["git"] + args, stderr=stderr).decode().strip()
-            )
-        else:
-            output = None
-            subprocess.check_call(["git"] + args, stderr=stderr)
-    finally:
-        os.fchdir(fd)
-        os.close(fd)
+    git_args = ["git", "-C", git_dir] + args
+
+    output = None
+    if capture:
+        output = subprocess.check_output(git_args, stderr=stderr).decode().strip()
+    else:
+        subprocess.check_call(git_args, stderr=stderr)
 
     return output
 
@@ -486,7 +480,7 @@ def query_execute_git_list(execute_git_list):
     for cmd in execute_git_list:
         # Provide quotes around arguments with spaces in them.
         print(
-            "cd %s && git %s"
+            "git -C %s %s"
             % (
                 cmd[1],
                 " ".join(
@@ -1634,7 +1628,7 @@ def determine_version_to_include_in_release(state, repo_info):
             "--no-decorate",
             "%s..%s" % (prev_of_repo, follow_branch),
         ]
-        print("cd %s && git %s:" % (repo_name, " ".join(git_cmd)))
+        print("git -C %s %s:" % (repo_name, " ".join(git_cmd)))
         execute_git(state, repo_name, git_cmd)
 
         print()
@@ -1642,8 +1636,7 @@ def determine_version_to_include_in_release(state, repo_info):
 
         print_line()
         print(
-            "Above is the output of:\n\ncd %s\ngit %s\n"
-            % (repo_name, " ".join(git_cmd))
+            "Above is the output of:\n\ngit -C %s %s\n" % (repo_name, " ".join(git_cmd))
         )
 
         print_line()
