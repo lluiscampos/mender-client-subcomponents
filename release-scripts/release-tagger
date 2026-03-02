@@ -32,7 +32,8 @@ DRY_RUN_REMOTE = None
 
 CONVENTIONAL_COMMIT_REGEX = (
     r"^(?P<type>build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)"
-    r"(?:\(\w+\))?:.*"
+    r"(?:\(\w+\))?"
+    r"(?P<breaking>!)?:.*"
 )
 
 # Always sign commits and tags
@@ -1539,7 +1540,9 @@ def determine_version_bump(state, repo_name, from_v, to_v):
         m = re.match(CONVENTIONAL_COMMIT_REGEX, commit_message)
         if m:
             groups = m.groupdict()
-            if groups["type"] == "feat":
+            if groups["breaking"] == "!":
+                version_mask[0] = True
+            elif groups["type"] == "feat":
                 version_mask[1] = True
             elif groups["type"] == "fix":
                 version_mask[2] = True
