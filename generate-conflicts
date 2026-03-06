@@ -42,14 +42,22 @@ conflicts=$(jq -r '.components[] | "\(.name) \(.version)"' "$RELEASE_FILE" | whi
         # Parse semantic version into components
         IFS='.' read -r major minor patch <<< "$base_version"
 
-        # Calculate previous version (decrement minor, set patch to 99)
-        if [ "$minor" -eq 0 ]; then
-            # Special case: if minor is 0, decrement major instead
-            prev_major=$((major - 1))
-            prev_version="$prev_major.99.99"
+        # Calculate previous version (decrement patch)
+        if [ "$patch" -eq 0 ]; then
+            # Special case: if patch is 0, need to handle differently
+            if [ "$minor" -eq 0 ]; then
+                # If both patch and minor are 0, decrement major
+                prev_major=$((major - 1))
+                prev_version="$prev_major.99.99"
+            else
+                # Decrement minor, set patch to 99
+                prev_minor=$((minor - 1))
+                prev_version="$major.$prev_minor.99"
+            fi
         else
-            prev_minor=$((minor - 1))
-            prev_version="$major.$prev_minor.99"
+            # Normal case: just decrement patch
+            prev_patch=$((patch - 1))
+            prev_version="$major.$minor.$prev_patch"
         fi
 
         # Calculate next version (increment patch)
