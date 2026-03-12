@@ -1,8 +1,9 @@
 
 ---
-## Older releases
 
-Previous to Mender Client 6.0, the release notes & changelog can be found in the pages for the individual components:
+# Older releases (pre Mender Client 6.0)
+
+The release notes & changelogs can be found in the pages for the individual components:
 
 * [mender](20.Mender-Client/docs.md)
 * [mender-connect](21.mender-connect/docs.md)
@@ -11,7 +12,7 @@ Previous to Mender Client 6.0, the release notes & changelog can be found in the
 * [mender-binary-delta](50.mender-binary-delta/docs.md)
 * [monitor-client](51.monitor-client/docs.md)
 
-The following release notes & changelog are for `mender` repository alone, prior to Mender Client 6.0
+The following release notes & changelogs are for the `mender` repository alone.
 
 ## mender 5.0.3
 
